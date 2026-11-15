@@ -1,3 +1,25 @@
+# Zvektra Android — verified test APK
+
+[Download the APK artifact](https://github.com/pierre123bh/Zvektra/actions/runs/43743354767/artifacts/14172579212)
+
+[Successful GitHub Actions run](https://github.com/pierre123bh/Zvektra/actions/runs/43743354767)
+
+Built November 15, 2026 from commit `79e9c78dc75e7dff52f9a3686b10105ccac21748`.
+Dart analysis, three URL tests, Android compilation and APK ZIP integrity checks passed.
+Unzip the artifact and install `app-debug.apk`. GitHub sign-in may be required.
+This is a debug-signed test APK; phone/NVR functionality remains unverified.
+
+The generated Android platform and resolved dependency lockfile are included in
+this repository. Use Flutter 3.29.3 and Java 17, then `flutter pub get`,
+`flutter test`, and `flutter build apk --debug`. GitHub Actions performs these
+steps automatically on pushes to main. No device credentials or signing keys
+are included. See [TESTING.md](TESTING.md) for implemented and unfinished features.
+
+## Original source archive notes (historical)
+
+The notes below describe the archive before its first successful Android build.
+Their statement that no APK has been compiled is superseded by the verified run above.
+
 # ZVEKTRA — new Flutter Android project (v0.1 source)
 
 ## What is implemented
