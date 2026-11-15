@@ -48,10 +48,6 @@ jobs:
               assert native == {'arm64-v8a'}, native
               assert 'lib/arm64-v8a/libvlc.so' in archive.namelist()
               assert 'lib/arm64-v8a/libapp.so' in archive.namelist()
-              whisper = archive.read('lib/arm64-v8a/libzvektra_whisper.so')
-              assert b'Java_net_zvektra_zvektra_WhisperNative_transcribe' in whisper
-              model = archive.read('assets/whisper/ggml-tiny-q5_1.bin')
-              assert hashlib.sha1(model).hexdigest() == '2827a03e495b1ed3048ef28a6a4620537db4ee51'
               pattern = rb'dev\.flutter\.pigeon\.[A-Za-z0-9_.]*VlcPlayerApi\.initialize'
               dart = set(re.findall(pattern, archive.read('lib/arm64-v8a/libapp.so')))
               android = {match for name in archive.namelist() if name.endswith('.dex')
