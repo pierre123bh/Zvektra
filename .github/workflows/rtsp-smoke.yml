@@ -1,8 +1,8 @@
-name: Android RTSP smoke test
+name: Android streaming and Whisper smoke test
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, "voice/offline-whisper"]
     paths:
       - 'lib/**'
       - 'integration_test/**'
@@ -78,4 +78,4 @@ jobs:
           api-level: 34
           arch: x86_64
           disable-animations: true
-          script: bash integration_test/run_release_rtsp.sh
+          script: bash integration_test/run_whisper_preview.sh

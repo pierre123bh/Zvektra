@@ -21,10 +21,11 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "net.zvektra.zvektra"
+        applicationId = "net.zvektra.zvektra.whisper"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 23
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -54,6 +55,8 @@ android {
         }
     }
 
+    testBuildType = "release"
+
     buildTypes {
         release {
             proguardFiles("proguard-rules.pro")
@@ -72,6 +75,8 @@ flutter {
 // the published Flutter platform interface.
 dependencies {
     implementation("org.videolan.android:libvlc-all:3.6.3")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }
 
 val whisperAssets = layout.buildDirectory.dir("generated/whisperAssets/whisper")
