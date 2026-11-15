@@ -1,0 +1,4 @@
+Zvektra bundles a quantized multilingual Whisper Tiny model from
+https://huggingface.co/ggerganov/whisper.cpp and uses whisper.cpp (MIT).
+Original model and its MIT license: https://github.com/openai/whisper/blob/main/LICENSE
+Whisper.cpp MIT license: https://github.com/ggml-org/whisper.cpp/blob/v1.7.6/LICENSE

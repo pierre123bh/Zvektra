@@ -7,7 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_vlc_player/flutter_vlc_player.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:permission_handler/permission_handler.dart';
 
 void main() { WidgetsFlutterBinding.ensureInitialized(); runApp(const ZvektraApp()); }
 
@@ -312,8 +312,45 @@ class _DeviceFormState extends State<_DeviceForm> {
 }
 
 class AssistantScreen extends StatefulWidget {final DeviceStore store;const AssistantScreen({super.key,required this.store});@override State<AssistantScreen> createState()=>_AssistantScreenState();}
-class _AssistantScreenState extends State<AssistantScreen> {
-  final command=TextEditingController();final speech=stt.SpeechToText();
+class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingObserver {
+  final command = TextEditingController();
+  static const _whisper = MethodChannel('net.zvektra/whisper');
+  Timer? _recordingLimit;
+  bool _voiceBusy = false;
+  int _voiceRequest = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.paused || (!recording && !_voiceBusy)) return;
+    _cancelVoice();
+    setState(() {
+      recording = false;
+      _voiceBusy = false;
+      output = 'Voice recording cancelled.';
+    });
+  }
+
+  void _cancelVoice() {
+    ++_voiceRequest;
+    _recordingLimit?.cancel();
+    if (recording || _voiceBusy) unawaited(_cancelNativeVoice());
+  }
+
+  Future<void> _cancelNativeVoice() async {
+    try {
+      await _whisper.invokeMethod<void>('cancel');
+    } on PlatformException {
+      // The activity may already be detached.
+    } on MissingPluginException {
+      // This screen is also used in Flutter-only tests.
+    }
+  }
   String output='Ready. Select an NVR and tell Zvektra what to play.';
   bool awaitingVoiceReview=false;
   bool detectionRequested=false;
@@ -332,8 +369,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
   void dispose() {
     _streamTimeout?.cancel();
     _portCheck?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _cancelVoice();
     command.dispose();
-    speech.stop();
     final active = player;
     if (active != null) unawaited(_disposePlayer(active));
     super.dispose();
@@ -625,12 +663,65 @@ class _AssistantScreenState extends State<AssistantScreen> {
     setState(()=>output='Try: "show camera 2", "playback camera 1", "pause", or "forward 30 seconds".');
   }
   Future<void> toggleMic() async {
-    if(recording){await speech.stop();setState(()=>recording=false);return;}
-    final ready=await speech.initialize(onStatus:(s){if(s=='done'&&mounted)setState(()=>recording=false);},onError:(e){if(mounted)setState(()=>output='Microphone: ${e.errorMsg}');});
-    if(!ready){setState(()=>output='Speech recognition unavailable on this phone.');return;}
-    setState(()=>recording=true);
-    await speech.listen(onResult:(r){command.value=TextEditingValue(text:r.recognizedWords,selection:TextSelection.collapsed(offset:r.recognizedWords.length));if(r.finalResult){setState((){recording=false;awaitingVoiceReview=true;output='Review the recognized command below. Correct it if necessary, then press Execute.';});}});
+    if (_voiceBusy) return;
+    final request = ++_voiceRequest;
+    final ending = recording;
+    _recordingLimit?.cancel();
+    setState(() {
+      _voiceBusy = true;
+      if (ending) {
+        recording = false;
+        output = 'Transcribing on this phone…';
+      }
+    });
+    bool current() => mounted && request == _voiceRequest;
+
+    try {
+      if (ending) {
+        final text = await _whisper.invokeMethod<String>('stop');
+        if (!current()) return;
+        if (text == null || text.trim().isEmpty) {
+          setState(() => output = 'No speech detected. Tap the microphone to try again.');
+          return;
+        }
+        command.value = TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: text.length),
+        );
+        setState(() {
+          awaitingVoiceReview = true;
+          output = 'Review the transcription, then press Execute.';
+        });
+      } else {
+        final permission = await Permission.microphone.request();
+        if (!current()) return;
+        if (!permission.isGranted) {
+          setState(() => output = 'Allow microphone access to record a command.');
+          return;
+        }
+        await _whisper.invokeMethod<void>('start');
+        if (!current()) return;
+        setState(() {
+          recording = true;
+          output = 'Listening… tap the microphone to finish.';
+        });
+        _recordingLimit = Timer(const Duration(seconds: 10), () {
+          if (mounted && recording) unawaited(toggleMic());
+        });
+      }
+    } on PlatformException {
+      if (current()) {
+        setState(() => output = ending
+            ? 'Offline transcription failed. Try again.'
+            : 'Could not start the microphone. Check its permission.');
+      }
+    } on MissingPluginException {
+      if (current()) setState(() => output = 'Offline voice input is unavailable.');
+    } finally {
+      if (current()) setState(() => _voiceBusy = false);
+    }
   }
+
   Widget _videoPanel() {
     final active = player;
     final status = _videoStatus;
@@ -666,5 +757,5 @@ class _AssistantScreenState extends State<AssistantScreen> {
     );
   }
 
-  @override Widget build(BuildContext context){final n=selected;return ListView(padding:const EdgeInsets.all(16),children:[const Center(child:Icon(Icons.blur_circular,size:82,color:cyan)),const SizedBox(height:6),Center(child:Text('ZVEKTRA ASSISTANT',style:Theme.of(context).textTheme.titleLarge)),const Center(child:Text('Local-first remote video intelligence',style:TextStyle(color:Colors.white60))),const SizedBox(height:18),if(widget.store.devices.isNotEmpty)DropdownButtonFormField<String>(value:n?.id,decoration:const InputDecoration(labelText:'Active NVR',border:OutlineInputBorder()),items:widget.store.devices.map((x)=>DropdownMenuItem(value:x.id,child:Text(x.name))).toList(),onChanged:(x)=>setState(()=>selectedId=x)),if(n!=null)...[const SizedBox(height:12),DropdownButtonFormField<int>(value:channel<=n.maxChannels?channel:1,decoration:const InputDecoration(labelText:'Camera',border:OutlineInputBorder()),items:List.generate(n.maxChannels,(i)=>DropdownMenuItem(value:i+1,child:Text('Camera ${i+1}'))),onChanged:(v)=>setState(()=>channel=v??1))],const SizedBox(height:14),Container(height:230,color:Colors.black,child:_videoPanel()),const SizedBox(height:12),Wrap(alignment:WrapAlignment.center,spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>play(),icon:const Icon(Icons.live_tv),label:const Text('Live')),OutlinedButton.icon(onPressed:()=>play(start:DateTime.now().subtract(const Duration(minutes:10))),icon:const Icon(Icons.history),label:const Text('Playback')),OutlinedButton.icon(onPressed:pausePlayback,icon:const Icon(Icons.pause),label:const Text('Pause')),OutlinedButton.icon(onPressed:resumePlayback,icon:const Icon(Icons.play_arrow),label:const Text('Resume'))]),const SizedBox(height:10),OutlinedButton.icon(onPressed:() async {final now=DateTime.now();final date=await showDatePicker(context:context,initialDate:now,firstDate:DateTime(2020),lastDate:now);if(date==null||!context.mounted)return;final time=await showTimePicker(context:context,initialTime:TimeOfDay.now());if(time==null||!context.mounted)return;await play(start:DateTime(date.year,date.month,date.day,time.hour,time.minute));},icon:const Icon(Icons.calendar_month),label:const Text('Select recording date & time')),if(from!=null)Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[TextButton(onPressed:()=>play(start:from!.subtract(const Duration(seconds:30))),child:const Text('−30 sec')),Text(DateFormat('MM/dd HH:mm:ss').format(from!)),TextButton(onPressed:()=>play(start:from!.add(const Duration(seconds:30))),child:const Text('+30 sec'))]),const SizedBox(height:12),Card(child:Padding(padding:const EdgeInsets.all(14),child:Text(output))),const SizedBox(height:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[if(awaitingVoiceReview)const Padding(padding:EdgeInsets.only(bottom:8),child:Text('Voice transcription — edit before executing',style:TextStyle(color:cyan))),Row(children:[Expanded(child:TextField(controller:command,minLines:1,maxLines:3,onChanged:(_){if(awaitingVoiceReview)setState((){});},onSubmitted:(v){setState(()=>awaitingVoiceReview=false);execute(v);},decoration:const InputDecoration(hintText:'Speak or type a command...',border:OutlineInputBorder()))),IconButton(onPressed:toggleMic,tooltip:recording?'Stop listening':'Speak command',icon:Icon(recording?Icons.mic:Icons.mic_none,color:cyan)),IconButton(onPressed:(){setState(()=>awaitingVoiceReview=false);execute(command.text);},tooltip:'Execute edited command',icon:const Icon(Icons.send,color:cyan))]),if(awaitingVoiceReview)TextButton.icon(onPressed:(){command.clear();setState(()=>awaitingVoiceReview=false);},icon:const Icon(Icons.close),label:const Text('Discard transcription'))]),const SizedBox(height:10),Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('People detection',style:TextStyle(fontWeight:FontWeight.bold)),Text(detectionRequested?'Requested — waiting for native AI integration':'Inactive'),const SizedBox(height:4),Text('Detected appearances: ${detectionEvents.length} (no AI frames processed)',style:const TextStyle(color:Colors.white70)),const Text('Snapshots: not yet available',style:TextStyle(color:Colors.white70))]))),const SizedBox(height:10),const Text('Voice input currently uses Android speech recognition, not Whisper. Transcriptions are editable and require confirmation. Offline Whisper and native AI frame detection/snapshots are not yet operational.',style:TextStyle(color:Colors.white54,fontSize:12))]);}
+  @override Widget build(BuildContext context){final n=selected;return ListView(padding:const EdgeInsets.all(16),children:[const Center(child:Icon(Icons.blur_circular,size:82,color:cyan)),const SizedBox(height:6),Center(child:Text('ZVEKTRA ASSISTANT',style:Theme.of(context).textTheme.titleLarge)),const Center(child:Text('Local-first remote video intelligence',style:TextStyle(color:Colors.white60))),const SizedBox(height:18),if(widget.store.devices.isNotEmpty)DropdownButtonFormField<String>(value:n?.id,decoration:const InputDecoration(labelText:'Active NVR',border:OutlineInputBorder()),items:widget.store.devices.map((x)=>DropdownMenuItem(value:x.id,child:Text(x.name))).toList(),onChanged:(x)=>setState(()=>selectedId=x)),if(n!=null)...[const SizedBox(height:12),DropdownButtonFormField<int>(value:channel<=n.maxChannels?channel:1,decoration:const InputDecoration(labelText:'Camera',border:OutlineInputBorder()),items:List.generate(n.maxChannels,(i)=>DropdownMenuItem(value:i+1,child:Text('Camera ${i+1}'))),onChanged:(v)=>setState(()=>channel=v??1))],const SizedBox(height:14),Container(height:230,color:Colors.black,child:_videoPanel()),const SizedBox(height:12),Wrap(alignment:WrapAlignment.center,spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>play(),icon:const Icon(Icons.live_tv),label:const Text('Live')),OutlinedButton.icon(onPressed:()=>play(start:DateTime.now().subtract(const Duration(minutes:10))),icon:const Icon(Icons.history),label:const Text('Playback')),OutlinedButton.icon(onPressed:pausePlayback,icon:const Icon(Icons.pause),label:const Text('Pause')),OutlinedButton.icon(onPressed:resumePlayback,icon:const Icon(Icons.play_arrow),label:const Text('Resume'))]),const SizedBox(height:10),OutlinedButton.icon(onPressed:() async {final now=DateTime.now();final date=await showDatePicker(context:context,initialDate:now,firstDate:DateTime(2020),lastDate:now);if(date==null||!context.mounted)return;final time=await showTimePicker(context:context,initialTime:TimeOfDay.now());if(time==null||!context.mounted)return;await play(start:DateTime(date.year,date.month,date.day,time.hour,time.minute));},icon:const Icon(Icons.calendar_month),label:const Text('Select recording date & time')),if(from!=null)Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[TextButton(onPressed:()=>play(start:from!.subtract(const Duration(seconds:30))),child:const Text('−30 sec')),Text(DateFormat('MM/dd HH:mm:ss').format(from!)),TextButton(onPressed:()=>play(start:from!.add(const Duration(seconds:30))),child:const Text('+30 sec'))]),const SizedBox(height:12),Card(child:Padding(padding:const EdgeInsets.all(14),child:Text(output))),const SizedBox(height:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[if(awaitingVoiceReview)const Padding(padding:EdgeInsets.only(bottom:8),child:Text('Voice transcription — edit before executing',style:TextStyle(color:cyan))),Row(children:[Expanded(child:TextField(controller:command,minLines:1,maxLines:3,onChanged:(_){if(awaitingVoiceReview)setState((){});},onSubmitted:(v){setState(()=>awaitingVoiceReview=false);execute(v);},decoration:const InputDecoration(hintText:'Speak or type a command...',border:OutlineInputBorder()))),IconButton(onPressed:_voiceBusy?null:toggleMic,tooltip:recording?'Stop listening':'Speak command',icon:Icon(recording?Icons.mic:Icons.mic_none,color:cyan)),IconButton(onPressed:(){setState(()=>awaitingVoiceReview=false);execute(command.text);},tooltip:'Execute edited command',icon:const Icon(Icons.send,color:cyan))]),if(awaitingVoiceReview)TextButton.icon(onPressed:(){command.clear();setState(()=>awaitingVoiceReview=false);},icon:const Icon(Icons.close),label:const Text('Discard transcription'))]),const SizedBox(height:10),Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('People detection',style:TextStyle(fontWeight:FontWeight.bold)),Text(detectionRequested?'Requested — waiting for native AI integration':'Inactive'),const SizedBox(height:4),Text('Detected appearances: ${detectionEvents.length} (no AI frames processed)',style:const TextStyle(color:Colors.white70)),const Text('Snapshots: not yet available',style:TextStyle(color:Colors.white70))]))),const SizedBox(height:10),const Text('Whisper transcribes speech on this phone. You can edit the text before executing a command. People detection and snapshots are not yet available.',style:TextStyle(color:Colors.white54,fontSize:12))]);}
 }

@@ -2,7 +2,7 @@ name: Build Zvektra Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, "voice/offline-whisper"]
   pull_request:
 permissions:
   contents: read
@@ -33,6 +33,7 @@ jobs:
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/Zvektra-ARM64.apk
           python3 - <<'PY'
+          import hashlib
           import re
           from pathlib import Path
           from zipfile import ZipFile
@@ -47,6 +48,10 @@ jobs:
               assert native == {'arm64-v8a'}, native
               assert 'lib/arm64-v8a/libvlc.so' in archive.namelist()
               assert 'lib/arm64-v8a/libapp.so' in archive.namelist()
+              whisper = archive.read('lib/arm64-v8a/libzvektra_whisper.so')
+              assert b'Java_net_zvektra_zvektra_WhisperNative_transcribe' in whisper
+              model = archive.read('assets/whisper/ggml-tiny-q5_1.bin')
+              assert hashlib.sha1(model).hexdigest() == '2827a03e495b1ed3048ef28a6a4620537db4ee51'
               pattern = rb'dev\.flutter\.pigeon\.[A-Za-z0-9_.]*VlcPlayerApi\.initialize'
               dart = set(re.findall(pattern, archive.read('lib/arm64-v8a/libapp.so')))
               android = {match for name in archive.namelist() if name.endswith('.dex')
