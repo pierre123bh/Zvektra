@@ -74,4 +74,4 @@ jobs:
           disable-animations: true
           script: |
             adb reverse tcp:8554 tcp:8554
-            flutter test integration_test/dahua_stream_test.dart --dart-define=ZVEKTRA_RTSP_HOST=127.0.0.1
+            flutter test integration_test/dahua_stream_test.dart --dart-define=ZVEKTRA_RTSP_HOST=127.0.0.1 || (adb logcat -d -s VLC:V MediaCodec:I flutter:I; exit 1)

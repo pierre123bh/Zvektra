@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +19,32 @@ class TestNvrStore extends DeviceStore {
 
   @override
   Future<String?> password(String id) async => 'fixture-pass';
+}
+
+Future<bool> displaysFixtureColors(VlcPlayerController controller) async {
+  if (!controller.value.isInitialized || !controller.value.isPlaying) return false;
+  final bytes = await controller.takeSnapshot();
+  if (bytes == null || bytes.isEmpty) return false;
+  final codec = await ui.instantiateImageCodec(bytes, targetWidth: 32);
+  try {
+    final frame = await codec.getNextFrame();
+    try {
+      final rgba = await frame.image.toByteData();
+      if (rgba == null) return false;
+      var coloredPixels = 0;
+      for (var i = 0; i < rgba.lengthInBytes; i += 4) {
+        final r = rgba.getUint8(i);
+        final g = rgba.getUint8(i + 1);
+        final b = rgba.getUint8(i + 2);
+        if ((r - g).abs() > 40 || (g - b).abs() > 40) coloredPixels++;
+      }
+      return coloredPixels > 20;
+    } finally {
+      frame.image.dispose();
+    }
+  } finally {
+    codec.dispose();
+  }
 }
 
 void main() {
@@ -51,7 +79,7 @@ void main() {
         final video = find.byType(VlcPlayer).evaluate();
         if (video.isEmpty) continue;
         final controller = (video.single.widget as VlcPlayer).controller;
-        if (controller.value.isPlaying && !controller.value.size.isEmpty) {
+        if (await displaysFixtureColors(controller)) {
           decoded = true;
           final data = controller.dataSource;
           final path = Uri.parse(data).path;
