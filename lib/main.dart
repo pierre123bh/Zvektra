@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -320,14 +321,20 @@ class _AssistantScreenState extends State<AssistantScreen> {
   String? selectedId;int channel=1;bool recording=false;DateTime? from;
   VlcPlayerController? player;
   Timer? _streamTimeout;
+  ConnectionTask<Socket>? _portCheck;
   int _playRequest = 0;
+  bool _connecting = false;
+  bool _hasVideo = false;
+  ({String deviceId, int camera, DateTime? start})? _lastStream;
 
   @override
   void dispose() {
     _streamTimeout?.cancel();
+    _portCheck?.cancel();
     command.dispose();
     speech.stop();
-    player?.dispose();
+    final active = player;
+    if (active != null) unawaited(_disposePlayer(active));
     super.dispose();
   }
 
@@ -338,80 +345,248 @@ class _AssistantScreenState extends State<AssistantScreen> {
     return widget.store.devices.isEmpty ? null : widget.store.devices.first;
   }
 
-  Future<void> play({DateTime? start}) async {
-    final request = ++_playRequest;
-    final device = selected;
-    if (device == null) {
+  Future<void> _disposePlayer(VlcPlayerController controller) async {
+    try {
+      await controller.dispose();
+    } on PlatformException {
+      // The platform view may already have released the native player.
+    }
+  }
+
+  void _replacePlayer(VlcPlayerController? next) {
+    final old = player;
+    player = next;
+    if (old != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_disposePlayer(old));
+      });
+    }
+  }
+
+  bool _isCurrent(int request) => mounted && request == _playRequest;
+
+  void _finishAttempt(int request, String message) {
+    if (!_isCurrent(request)) return;
+    _streamTimeout?.cancel();
+    setState(() {
+      _connecting = false;
+      _hasVideo = false;
+      _replacePlayer(null);
+      output = message;
+    });
+  }
+
+  Future<void> play({DateTime? start, Nvr? device, int? camera}) async {
+    final target = device ?? selected;
+    if (target == null) {
       setState(() => output = 'Add an NVR in Devices first.');
       return;
     }
-    final camera = channel.clamp(1, device.maxChannels).toInt();
+
+    final request = ++_playRequest;
+    final cameraNumber = (camera ?? channel).clamp(1, target.maxChannels).toInt();
+    final source = '${target.name}, camera $cameraNumber';
+    final port = int.tryParse(target.port);
+    _streamTimeout?.cancel();
+    _portCheck?.cancel();
+    setState(() {
+      _replacePlayer(null);
+      _connecting = true;
+      _hasVideo = false;
+      _lastStream = (deviceId: target.id, camera: cameraNumber, start: start);
+      selectedId = target.id;
+      channel = cameraNumber;
+      from = start;
+      output = 'Connecting to $source…';
+    });
+
+    if (port == null || port < 1 || port > 65535) {
+      _finishAttempt(request, 'Edit the NVR and enter a valid RTSP port.');
+      return;
+    }
+
     String? password;
     try {
-      password = await widget.store.password(device.id);
+      password = await widget.store.password(target.id);
     } on Exception {
-      if (mounted && request == _playRequest) {
-        setState(() => output = 'Could not read the password. Edit the NVR and save it again.');
-      }
+      _finishAttempt(request, 'Could not read the password. Edit the NVR and save it again.');
       return;
     }
-    if (!mounted || request != _playRequest) return;
+    if (!_isCurrent(request)) return;
     if (password == null || password.isEmpty) {
-      setState(() => output = 'Edit the NVR and enter its password.');
+      _finishAttempt(request, 'Edit the NVR and enter its password.');
       return;
     }
-
-    final link = StreamBuilderService.url(device, camera, start: start, password: password);
+    final link = StreamBuilderService.url(
+      target, cameraNumber, start: start, password: password,
+    );
+    final mode = start == null ? 'Live video' : 'Recorded playback';
     if (link == null) {
-      final mode = start == null ? 'Live video' : 'Recorded playback';
-      setState(() => output = '$mode is unavailable for ${device.manufacturer}.');
+      _finishAttempt(request, '$mode is unavailable for ${target.manufacturer}.');
       return;
     }
 
-    final old = player;
+    _openStream(request, link, port, mode, source, softwareDecoding: false);
+  }
+
+  void _openStream(
+    int request,
+    String link,
+    int port,
+    String mode,
+    String source, {
+    required bool softwareDecoding,
+  }) {
     final next = VlcPlayerController.network(
       link,
-      hwAcc: HwAcc.auto,
+      hwAcc: softwareDecoding ? HwAcc.disabled : HwAcc.auto,
       autoPlay: true,
       options: VlcPlayerOptions(
         rtp: VlcRtpOptions([VlcRtpOptions.rtpOverRtsp(true)]),
         advanced: VlcAdvancedOptions([VlcAdvancedOptions.networkCaching(750)]),
       ),
     );
-    _streamTimeout?.cancel();
-    final mode = start == null ? 'Live' : 'Recorded';
-    final source = '${device.name}, camera $camera';
-    final error = 'Could not start $mode video for $source. Check the RTSP port, '
-        'credentials and camera number${start == null ? '.' : ', and confirm a recording exists for that time.'}';
 
+    bool current() => _isCurrent(request) && identical(player, next);
+    bool failed = false;
     bool started = false;
+
+    Future<void> handleFailure() async {
+      if (!current() || failed) return;
+      failed = true;
+      _streamTimeout?.cancel();
+      setState(() {
+        _connecting = true;
+        _hasVideo = false;
+        _replacePlayer(null);
+        output = 'Checking RTSP port $port…';
+      });
+
+      if (!await _checkPort(request, port)) {
+        _finishAttempt(
+          request,
+          'Could not reach RTSP port $port. Check the NVR is online and this '
+          'TCP port is forwarded to it.',
+        );
+        return;
+      }
+      if (!_isCurrent(request)) return;
+      if (!softwareDecoding && !started) {
+        _openStream(request, link, port, mode, source, softwareDecoding: true);
+        return;
+      }
+      _finishAttempt(request, 'RTSP port $port is reachable, but '
+          '${mode.toLowerCase()} failed for $source. Check the NVR login and '
+          '${mode == 'Recorded playback' ? 'recording time.' : 'camera stream.'}');
+    }
+
     next.addListener(() {
-      if (!mounted || !identical(player, next)) return;
+      if (!current() || failed) return;
       if (next.value.hasError) {
-        _streamTimeout?.cancel();
-        if (output != error) setState(() => output = error);
+        unawaited(handleFailure());
       } else if (!started && next.value.isPlaying && !next.value.size.isEmpty) {
         started = true;
         _streamTimeout?.cancel();
-        setState(() => output = '$mode video: $source');
+        setState(() {
+          _connecting = false;
+          _hasVideo = true;
+          output = '$mode: $source';
+        });
       }
     });
+
     setState(() {
-      player = next;
-      channel = camera;
-      from = start;
-      output = 'Connecting to $source…';
+      _replacePlayer(next);
+      if (softwareDecoding) output = 'Retrying video for $source…';
     });
-    _streamTimeout = Timer(const Duration(seconds: 18), () {
-      if (mounted && identical(player, next) && !started) {
-        setState(() => output = error);
-      }
+    _streamTimeout = Timer(const Duration(seconds: 15), () {
+      if (!started) unawaited(handleFailure());
     });
-    if (old != null) {
-      // Leave the old controller alive until its platform view is removed.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(old.dispose());
+  }
+
+  Future<bool> _checkPort(int request, int port) async {
+    ConnectionTask<Socket>? task;
+    final deadline = Stopwatch()..start();
+    const timeout = Duration(seconds: 5);
+    // A DNS lookup may outlast the timeout. Close any socket it creates late.
+    bool expired = false;
+    try {
+      task = await Socket.startConnect(host, port).then((connection) {
+        if (expired || !_isCurrent(request)) {
+          unawaited(connection.socket.then<void>(
+            (socket) => socket.destroy(),
+            onError: (Object _) {},
+          ));
+          connection.cancel();
+          return null;
+        }
+        return connection;
+      }).timeout(timeout);
+      if (task == null) return false;
+      _portCheck = task;
+      final socket = await task.socket.timeout(timeout - deadline.elapsed);
+      socket.destroy();
+      return true;
+    } on SocketException {
+      return false;
+    } on TimeoutException {
+      expired = true;
+      return false;
+    } finally {
+      task?.cancel();
+      if (identical(_portCheck, task)) _portCheck = null;
+    }
+  }
+
+  Future<void> pausePlayback() async {
+    if (_connecting) {
+      ++_playRequest;
+      _streamTimeout?.cancel();
+      _portCheck?.cancel();
+      setState(() {
+        _connecting = false;
+        _replacePlayer(null);
+        output = 'Connection cancelled.';
       });
+      return;
+    }
+    final active = player;
+    if (!_hasVideo || active == null) return;
+    try {
+      await active.pause();
+      if (mounted && identical(player, active)) {
+        setState(() => output = 'Paused.');
+      }
+    } on PlatformException {
+      if (mounted && identical(player, active)) {
+        setState(() => output = 'Could not pause this stream.');
+      }
+    }
+  }
+
+  Future<void> resumePlayback() async {
+    if (_connecting) return;
+    final active = player;
+    if (_hasVideo && active != null) {
+      try {
+        await active.play();
+        if (mounted && identical(player, active)) {
+          setState(() => output = 'Resumed.');
+        }
+      } on PlatformException {
+        if (mounted && identical(player, active)) {
+          setState(() => output = 'Could not resume this stream.');
+        }
+      }
+      return;
+    }
+    final last = _lastStream;
+    if (last == null) return;
+    for (final device in widget.store.devices) {
+      if (device.id == last.deviceId) {
+        await play(start: last.start, device: device, camera: last.camera);
+        return;
+      }
     }
   }
   Future<void> execute(String raw) async {
@@ -421,8 +596,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
     if(match!=null){final c=int.parse(match.group(1)!);if(selected!=null&&c<=selected!.maxChannels&&c>0)channel=c;else{setState(()=>output='Camera $c is outside the configured channel range.');return;}}
     if(text.contains('stop counting')||text.contains('stop detection')){setState((){detectionRequested=false;output='Detection request stopped. The native AI engine is not yet connected.';});return;}
     if(text.contains('count')||text.contains('detect')||text.contains('snapshot')){setState((){detectionRequested=true;output='Person detection requested. Native frame extraction and inference are not yet connected; no count or snapshots have been generated.';});return;}
-    if(text.contains('pause')){await player?.pause();setState(()=>output='Paused');return;}
-    if(text.contains('resume')){await player?.play();setState(()=>output='Resumed');return;}
+    if(text.contains('pause')){await pausePlayback();return;}
+    if(text.contains('resume')){await resumePlayback();return;}
     if(text.contains('forward')||text.contains('back')){final seconds=int.tryParse(RegExp(r'\d+').firstMatch(text)?.group(0)??'30')??30;if(from==null){setState(()=>output='Choose recorded playback first.');return;}await play(start:from!.add(Duration(seconds:text.contains('back')?-seconds:seconds)));return;}
     if(text.contains('yesterday')){final now=DateTime.now();final yesterday=DateTime(now.year,now.month,now.day-1,now.hour,now.minute);await play(start:yesterday);return;}
     if(text.contains('record')||text.contains('playback')){await play(start:DateTime.now().subtract(const Duration(minutes:10)));return;}
@@ -436,5 +611,5 @@ class _AssistantScreenState extends State<AssistantScreen> {
     setState(()=>recording=true);
     await speech.listen(onResult:(r){command.value=TextEditingValue(text:r.recognizedWords,selection:TextSelection.collapsed(offset:r.recognizedWords.length));if(r.finalResult){setState((){recording=false;awaitingVoiceReview=true;output='Review the recognized command below. Correct it if necessary, then press Execute.';});}});
   }
-  @override Widget build(BuildContext context){final n=selected;return ListView(padding:const EdgeInsets.all(16),children:[const Center(child:Icon(Icons.blur_circular,size:82,color:cyan)),const SizedBox(height:6),Center(child:Text('ZVEKTRA ASSISTANT',style:Theme.of(context).textTheme.titleLarge)),const Center(child:Text('Local-first remote video intelligence',style:TextStyle(color:Colors.white60))),const SizedBox(height:18),if(widget.store.devices.isNotEmpty)DropdownButtonFormField<String>(value:n?.id,decoration:const InputDecoration(labelText:'Active NVR',border:OutlineInputBorder()),items:widget.store.devices.map((x)=>DropdownMenuItem(value:x.id,child:Text(x.name))).toList(),onChanged:(x)=>setState(()=>selectedId=x)),if(n!=null)...[const SizedBox(height:12),DropdownButtonFormField<int>(value:channel<=n.maxChannels?channel:1,decoration:const InputDecoration(labelText:'Camera',border:OutlineInputBorder()),items:List.generate(n.maxChannels,(i)=>DropdownMenuItem(value:i+1,child:Text('Camera ${i+1}'))),onChanged:(v)=>setState(()=>channel=v??1))],const SizedBox(height:14),Container(height:230,color:Colors.black,child:player==null?const Center(child:Text('No video selected')):VlcPlayer(key:ObjectKey(player),controller:player!,aspectRatio:16/9,placeholder:const Center(child:CircularProgressIndicator()))),const SizedBox(height:12),Wrap(alignment:WrapAlignment.center,spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>play(),icon:const Icon(Icons.live_tv),label:const Text('Live')),OutlinedButton.icon(onPressed:()=>play(start:DateTime.now().subtract(const Duration(minutes:10))),icon:const Icon(Icons.history),label:const Text('Playback')),OutlinedButton.icon(onPressed:()=>player?.pause(),icon:const Icon(Icons.pause),label:const Text('Pause')),OutlinedButton.icon(onPressed:()=>player?.play(),icon:const Icon(Icons.play_arrow),label:const Text('Resume'))]),const SizedBox(height:10),OutlinedButton.icon(onPressed:() async {final now=DateTime.now();final date=await showDatePicker(context:context,initialDate:now,firstDate:DateTime(2020),lastDate:now);if(date==null||!context.mounted)return;final time=await showTimePicker(context:context,initialTime:TimeOfDay.now());if(time==null||!context.mounted)return;await play(start:DateTime(date.year,date.month,date.day,time.hour,time.minute));},icon:const Icon(Icons.calendar_month),label:const Text('Select recording date & time')),if(from!=null)Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[TextButton(onPressed:()=>play(start:from!.subtract(const Duration(seconds:30))),child:const Text('−30 sec')),Text(DateFormat('MM/dd HH:mm:ss').format(from!)),TextButton(onPressed:()=>play(start:from!.add(const Duration(seconds:30))),child:const Text('+30 sec'))]),const SizedBox(height:12),Card(child:Padding(padding:const EdgeInsets.all(14),child:Text(output))),const SizedBox(height:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[if(awaitingVoiceReview)const Padding(padding:EdgeInsets.only(bottom:8),child:Text('Voice transcription — edit before executing',style:TextStyle(color:cyan))),Row(children:[Expanded(child:TextField(controller:command,minLines:1,maxLines:3,onChanged:(_){if(awaitingVoiceReview)setState((){});},onSubmitted:(v){setState(()=>awaitingVoiceReview=false);execute(v);},decoration:const InputDecoration(hintText:'Speak or type a command...',border:OutlineInputBorder()))),IconButton(onPressed:toggleMic,tooltip:recording?'Stop listening':'Speak command',icon:Icon(recording?Icons.mic:Icons.mic_none,color:cyan)),IconButton(onPressed:(){setState(()=>awaitingVoiceReview=false);execute(command.text);},tooltip:'Execute edited command',icon:const Icon(Icons.send,color:cyan))]),if(awaitingVoiceReview)TextButton.icon(onPressed:(){command.clear();setState(()=>awaitingVoiceReview=false);},icon:const Icon(Icons.close),label:const Text('Discard transcription'))]),const SizedBox(height:10),Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('People detection',style:TextStyle(fontWeight:FontWeight.bold)),Text(detectionRequested?'Requested — waiting for native AI integration':'Inactive'),const SizedBox(height:4),Text('Detected appearances: ${detectionEvents.length} (no AI frames processed)',style:const TextStyle(color:Colors.white70)),const Text('Snapshots: not yet available',style:TextStyle(color:Colors.white70))]))),const SizedBox(height:10),const Text('Voice input currently uses Android speech recognition, not Whisper. Transcriptions are editable and require confirmation. Offline Whisper and native AI frame detection/snapshots are not yet operational.',style:TextStyle(color:Colors.white54,fontSize:12))]);}
+  @override Widget build(BuildContext context){final n=selected;return ListView(padding:const EdgeInsets.all(16),children:[const Center(child:Icon(Icons.blur_circular,size:82,color:cyan)),const SizedBox(height:6),Center(child:Text('ZVEKTRA ASSISTANT',style:Theme.of(context).textTheme.titleLarge)),const Center(child:Text('Local-first remote video intelligence',style:TextStyle(color:Colors.white60))),const SizedBox(height:18),if(widget.store.devices.isNotEmpty)DropdownButtonFormField<String>(value:n?.id,decoration:const InputDecoration(labelText:'Active NVR',border:OutlineInputBorder()),items:widget.store.devices.map((x)=>DropdownMenuItem(value:x.id,child:Text(x.name))).toList(),onChanged:(x)=>setState(()=>selectedId=x)),if(n!=null)...[const SizedBox(height:12),DropdownButtonFormField<int>(value:channel<=n.maxChannels?channel:1,decoration:const InputDecoration(labelText:'Camera',border:OutlineInputBorder()),items:List.generate(n.maxChannels,(i)=>DropdownMenuItem(value:i+1,child:Text('Camera ${i+1}'))),onChanged:(v)=>setState(()=>channel=v??1))],const SizedBox(height:14),Container(height:230,color:Colors.black,child:player==null?const Center(child:Text('No video selected')):VlcPlayer(key:ObjectKey(player),controller:player!,aspectRatio:16/9,placeholder:const Center(child:CircularProgressIndicator()))),const SizedBox(height:12),Wrap(alignment:WrapAlignment.center,spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>play(),icon:const Icon(Icons.live_tv),label:const Text('Live')),OutlinedButton.icon(onPressed:()=>play(start:DateTime.now().subtract(const Duration(minutes:10))),icon:const Icon(Icons.history),label:const Text('Playback')),OutlinedButton.icon(onPressed:pausePlayback,icon:const Icon(Icons.pause),label:const Text('Pause')),OutlinedButton.icon(onPressed:resumePlayback,icon:const Icon(Icons.play_arrow),label:const Text('Resume'))]),const SizedBox(height:10),OutlinedButton.icon(onPressed:() async {final now=DateTime.now();final date=await showDatePicker(context:context,initialDate:now,firstDate:DateTime(2020),lastDate:now);if(date==null||!context.mounted)return;final time=await showTimePicker(context:context,initialTime:TimeOfDay.now());if(time==null||!context.mounted)return;await play(start:DateTime(date.year,date.month,date.day,time.hour,time.minute));},icon:const Icon(Icons.calendar_month),label:const Text('Select recording date & time')),if(from!=null)Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[TextButton(onPressed:()=>play(start:from!.subtract(const Duration(seconds:30))),child:const Text('−30 sec')),Text(DateFormat('MM/dd HH:mm:ss').format(from!)),TextButton(onPressed:()=>play(start:from!.add(const Duration(seconds:30))),child:const Text('+30 sec'))]),const SizedBox(height:12),Card(child:Padding(padding:const EdgeInsets.all(14),child:Text(output))),const SizedBox(height:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[if(awaitingVoiceReview)const Padding(padding:EdgeInsets.only(bottom:8),child:Text('Voice transcription — edit before executing',style:TextStyle(color:cyan))),Row(children:[Expanded(child:TextField(controller:command,minLines:1,maxLines:3,onChanged:(_){if(awaitingVoiceReview)setState((){});},onSubmitted:(v){setState(()=>awaitingVoiceReview=false);execute(v);},decoration:const InputDecoration(hintText:'Speak or type a command...',border:OutlineInputBorder()))),IconButton(onPressed:toggleMic,tooltip:recording?'Stop listening':'Speak command',icon:Icon(recording?Icons.mic:Icons.mic_none,color:cyan)),IconButton(onPressed:(){setState(()=>awaitingVoiceReview=false);execute(command.text);},tooltip:'Execute edited command',icon:const Icon(Icons.send,color:cyan))]),if(awaitingVoiceReview)TextButton.icon(onPressed:(){command.clear();setState(()=>awaitingVoiceReview=false);},icon:const Icon(Icons.close),label:const Text('Discard transcription'))]),const SizedBox(height:10),Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('People detection',style:TextStyle(fontWeight:FontWeight.bold)),Text(detectionRequested?'Requested — waiting for native AI integration':'Inactive'),const SizedBox(height:4),Text('Detected appearances: ${detectionEvents.length} (no AI frames processed)',style:const TextStyle(color:Colors.white70)),const Text('Snapshots: not yet available',style:TextStyle(color:Colors.white70))]))),const SizedBox(height:10),const Text('Voice input currently uses Android speech recognition, not Whisper. Transcriptions are editable and require confirmation. Offline Whisper and native AI frame detection/snapshots are not yet operational.',style:TextStyle(color:Colors.white54,fontSize:12))]);}
 }
