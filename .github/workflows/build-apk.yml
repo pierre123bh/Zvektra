@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
-
+permissions:
+  contents: read
 jobs:
   android:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -18,35 +18,49 @@ jobs:
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.29.3'
           channel: stable
           cache: true
-      - name: Verify application source
+      - name: Generate Android platform in GitHub runner
         run: |
-          test -f pubspec.yaml
-          test -f lib/main.dart || { echo "::error::Missing lib/main.dart. Import v2 source before building."; exit 1; }
-      - name: Generate Android project
-        run: flutter create --platforms=android --project-name zvektra .
-      - name: Android permissions
-        run: |
+          flutter create --platforms=android --org net.zvektra --project-name zvektra /tmp/zvektra_platform
+          cp -R /tmp/zvektra_platform/android ./android
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('android/app/src/main/AndroidManifest.xml')
-          s=p.read_text()
-          for permission in ('android.permission.INTERNET','android.permission.RECORD_AUDIO'):
-              tag=f'<uses-permission android:name="{permission}" />'
-              if tag not in s:
-                  s=s.replace('<application',f'{tag}\n    <application',1)
+          p = Path('android/app/src/main/AndroidManifest.xml')
+          s = p.read_text().replace('<application', '''<uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <queries><intent><action android:name="android.speech.RecognitionService" /></intent></queries>
+              <application android:allowBackup="false" android:usesCleartextTraffic="true"''', 1)
+          p.write_text(s)
+          p = Path('android/app/build.gradle.kts')
+          s = p.read_text().replace('minSdk = flutter.minSdkVersion', 'minSdk = 23')
           p.write_text(s)
           PY
       - run: flutter pub get
-      - run: flutter analyze
-      - name: Run tests if present
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - name: Build installable test APK
+        run: flutter build apk --debug
+      - name: Verify and checksum APK
         run: |
-          if [ -d test ] && find test -name '*_test.dart' | grep -q .; then flutter test; else echo 'No Flutter tests present'; fi
-      - run: flutter build apk --debug
+          test -s build/app/outputs/flutter-apk/app-debug.apk
+          unzip -t build/app/outputs/flutter-apk/app-debug.apk
+          cd build/app/outputs/flutter-apk
+          sha256sum app-debug.apk > app-debug.apk.sha256
       - uses: actions/upload-artifact@v4
-        if: success()
         with:
           name: zvektra-android-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
-          retention-days: 14
+          path: |
+            build/app/outputs/flutter-apk/app-debug.apk
+            build/app/outputs/flutter-apk/app-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 90
+      - name: Package generated Android project and resolved source
+        run: zip -r zvektra-build-source.zip android lib test pubspec.yaml pubspec.lock README.md IMPLEMENTATION_PLAN.md .github -x 'android/local.properties' 'android/.gradle/*' 'android/**/build/*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zvektra-complete-build-source
+          path: zvektra-build-source.zip
+          if-no-files-found: error
+          retention-days: 90
