@@ -1,0 +1,73 @@
+name: Android RTSP smoke test
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/**'
+      - 'integration_test/**'
+      - 'pubspec.yaml'
+      - 'android/**'
+      - '.github/workflows/rtsp-smoke.yml'
+permissions:
+  contents: read
+jobs:
+  rtsp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.3'
+          channel: stable
+          cache: true
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Start authenticated RTSP fixture
+        run: |
+          cat > /tmp/mediamtx.yml <<'EOF'
+          logLevel: warn
+          rtspTransports: [tcp]
+          authInternalUsers:
+            - user: any
+              ips: ['127.0.0.1']
+              permissions:
+                - action: publish
+            - user: viewer
+              pass: fixture-pass
+              permissions:
+                - action: read
+          paths:
+            all_others:
+          EOF
+          docker run --rm -d --name zvektra-rtsp --network host             -v /tmp/mediamtx.yml:/mediamtx.yml:ro bluenviron/mediamtx:1.12.3
+          for attempt in {1..30}; do
+            if nc -z 127.0.0.1 8554; then break; fi
+            sleep 1
+          done
+          nc -z 127.0.0.1 8554
+          for path in realmonitor playback; do
+            ffmpeg -nostdin -hide_banner -loglevel error -re               -f lavfi -i testsrc2=size=320x240:rate=10 -an -c:v libx264               -preset ultrafast -tune zerolatency -g 10 -pix_fmt yuv420p               -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/cam/$path"               >"/tmp/$path.log" 2>&1 &
+          done
+          sleep 2
+          for path in realmonitor playback; do
+            timeout 12 ffprobe -v error -rtsp_transport tcp               "rtsp://viewer:fixture-pass@127.0.0.1:8554/cam/$path"
+          done
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb reverse tcp:8554 tcp:8554
+            flutter test integration_test/dahua_stream_test.dart --dart-define=ZVEKTRA_RTSP_HOST=127.0.0.1

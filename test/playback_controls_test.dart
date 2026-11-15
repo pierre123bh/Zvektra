@@ -48,9 +48,9 @@ void main() {
     await tester.pump();
     store.pendingReads.first.complete(null);
     await tester.pump();
-    await tester.scrollUntilVisible(find.text('Connection cancelled.'), 120, scrollable: streamList,
+    await tester.scrollUntilVisible(find.text('Connection cancelled.').first, 120, scrollable: streamList,
     );
-    expect(find.text('Connection cancelled.'), findsOneWidget);
+    expect(find.text('Connection cancelled.'), findsWidgets);
     expect(find.text('Edit the NVR and enter its password.'), findsNothing);
 
     await tester.ensureVisible(find.text('Resume'));
@@ -60,9 +60,9 @@ void main() {
     store.pendingReads.last.complete(null);
     await tester.pump();
     await tester.scrollUntilVisible(
-      find.text('Edit the NVR and enter its password.'), 120,
+      find.text('Edit the NVR and enter its password.').first, 120,
       scrollable: streamList,
     );
-    expect(find.text('Edit the NVR and enter its password.'), findsOneWidget);
+    expect(find.text('Edit the NVR and enter its password.'), findsWidgets);
   });
 }

@@ -11,7 +11,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 void main() { WidgetsFlutterBinding.ensureInitialized(); runApp(const ZvektraApp()); }
 
-const host = 'zvektra.net';
+const host = String.fromEnvironment('ZVEKTRA_RTSP_HOST', defaultValue: 'zvektra.net');
 const manufacturers = ['Dahua', 'Hikvision', 'Uniview', 'MEye'];
 const navy = Color(0xFF0D1725);
 const cyan = Color(0xFF62E2E6);
@@ -87,12 +87,12 @@ class DeviceStore extends ChangeNotifier {
 // Only Dahua's recording RTSP path has been verified with the user's NVR.
 // Other vendor URLs are candidates requiring hardware-specific verification.
 class StreamBuilderService {
-  static String? url(Nvr n,int channel,{DateTime? start,DateTime? end,required String password}) {
+  static String? url(Nvr n,int channel,{DateTime? start,DateTime? end,bool mainStream=false,required String password}) {
     final user=Uri.encodeComponent(n.username);
     final pass=Uri.encodeComponent(password);
     final base='rtsp://$user:$pass@$host:${n.port}';
     if(n.manufacturer=='Dahua') {
-      if(start==null) return '$base/cam/realmonitor?channel=$channel&subtype=1';
+      if(start==null) return '$base/cam/realmonitor?channel=$channel&subtype=${mainStream ? 0 : 1}';
       final f=DateFormat('yyyy_MM_dd_HH_mm_ss');
       return '$base/cam/playback?channel=$channel&starttime=${f.format(start)}&endtime=${f.format(end??start.add(const Duration(minutes:10)))}';
     }
@@ -325,6 +325,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
   int _playRequest = 0;
   bool _connecting = false;
   bool _hasVideo = false;
+  String? _videoStatus;
   ({String deviceId, int camera, DateTime? start})? _lastStream;
 
   @override
@@ -373,6 +374,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
       _hasVideo = false;
       _replacePlayer(null);
       output = message;
+      _videoStatus = message;
     });
   }
 
@@ -398,6 +400,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
       channel = cameraNumber;
       from = start;
       output = 'Connecting to $source…';
+      _videoStatus = output;
     });
 
     if (port == null || port < 1 || port > 65535) {
@@ -426,7 +429,15 @@ class _AssistantScreenState extends State<AssistantScreen> {
       return;
     }
 
-    _openStream(request, link, port, mode, source, softwareDecoding: false);
+    final alternateLink = start == null && target.manufacturer == 'Dahua'
+        ? StreamBuilderService.url(
+            target, cameraNumber, password: password, mainStream: true,
+          )
+        : null;
+    _openStream(
+      request, link, port, mode, source,
+      softwareDecoding: false, alternateLink: alternateLink,
+    );
   }
 
   void _openStream(
@@ -436,6 +447,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
     String mode,
     String source, {
     required bool softwareDecoding,
+    String? alternateLink,
   }) {
     final next = VlcPlayerController.network(
       link,
@@ -443,7 +455,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
       autoPlay: true,
       options: VlcPlayerOptions(
         rtp: VlcRtpOptions([VlcRtpOptions.rtpOverRtsp(true)]),
-        advanced: VlcAdvancedOptions([VlcAdvancedOptions.networkCaching(750)]),
+        advanced: VlcAdvancedOptions([VlcAdvancedOptions.networkCaching(1000)]),
+        extras: [':rtsp-tcp'],
       ),
     );
 
@@ -460,6 +473,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
         _hasVideo = false;
         _replacePlayer(null);
         output = 'Checking RTSP port $port…';
+        _videoStatus = output;
       });
 
       if (!await _checkPort(request, port)) {
@@ -471,8 +485,13 @@ class _AssistantScreenState extends State<AssistantScreen> {
         return;
       }
       if (!_isCurrent(request)) return;
-      if (!softwareDecoding && !started) {
-        _openStream(request, link, port, mode, source, softwareDecoding: true);
+      if (!started && (!softwareDecoding || alternateLink != null)) {
+        final tryMainStream = softwareDecoding && alternateLink != null;
+        _openStream(
+          request, tryMainStream ? alternateLink : link, port, mode, source,
+          softwareDecoding: true,
+          alternateLink: tryMainStream ? null : alternateLink,
+        );
         return;
       }
       _finishAttempt(request, 'RTSP port $port is reachable, but '
@@ -484,7 +503,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
       if (!current() || failed) return;
       if (next.value.hasError) {
         unawaited(handleFailure());
-      } else if (!started && next.value.isPlaying && !next.value.size.isEmpty) {
+      } else if (!started && (next.value.isPlaying || next.value.position > Duration.zero)) {
         started = true;
         _streamTimeout?.cancel();
         setState(() {
@@ -498,6 +517,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
     setState(() {
       _replacePlayer(next);
       if (softwareDecoding) output = 'Retrying video for $source…';
+      _videoStatus = output;
     });
     _streamTimeout = Timer(const Duration(seconds: 15), () {
       if (!started) unawaited(handleFailure());
@@ -547,6 +567,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
         _connecting = false;
         _replacePlayer(null);
         output = 'Connection cancelled.';
+        _videoStatus = output;
       });
       return;
     }
@@ -611,5 +632,40 @@ class _AssistantScreenState extends State<AssistantScreen> {
     setState(()=>recording=true);
     await speech.listen(onResult:(r){command.value=TextEditingValue(text:r.recognizedWords,selection:TextSelection.collapsed(offset:r.recognizedWords.length));if(r.finalResult){setState((){recording=false;awaitingVoiceReview=true;output='Review the recognized command below. Correct it if necessary, then press Execute.';});}});
   }
-  @override Widget build(BuildContext context){final n=selected;return ListView(padding:const EdgeInsets.all(16),children:[const Center(child:Icon(Icons.blur_circular,size:82,color:cyan)),const SizedBox(height:6),Center(child:Text('ZVEKTRA ASSISTANT',style:Theme.of(context).textTheme.titleLarge)),const Center(child:Text('Local-first remote video intelligence',style:TextStyle(color:Colors.white60))),const SizedBox(height:18),if(widget.store.devices.isNotEmpty)DropdownButtonFormField<String>(value:n?.id,decoration:const InputDecoration(labelText:'Active NVR',border:OutlineInputBorder()),items:widget.store.devices.map((x)=>DropdownMenuItem(value:x.id,child:Text(x.name))).toList(),onChanged:(x)=>setState(()=>selectedId=x)),if(n!=null)...[const SizedBox(height:12),DropdownButtonFormField<int>(value:channel<=n.maxChannels?channel:1,decoration:const InputDecoration(labelText:'Camera',border:OutlineInputBorder()),items:List.generate(n.maxChannels,(i)=>DropdownMenuItem(value:i+1,child:Text('Camera ${i+1}'))),onChanged:(v)=>setState(()=>channel=v??1))],const SizedBox(height:14),Container(height:230,color:Colors.black,child:player==null?const Center(child:Text('No video selected')):VlcPlayer(key:ObjectKey(player),controller:player!,aspectRatio:16/9,placeholder:const Center(child:CircularProgressIndicator()))),const SizedBox(height:12),Wrap(alignment:WrapAlignment.center,spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>play(),icon:const Icon(Icons.live_tv),label:const Text('Live')),OutlinedButton.icon(onPressed:()=>play(start:DateTime.now().subtract(const Duration(minutes:10))),icon:const Icon(Icons.history),label:const Text('Playback')),OutlinedButton.icon(onPressed:pausePlayback,icon:const Icon(Icons.pause),label:const Text('Pause')),OutlinedButton.icon(onPressed:resumePlayback,icon:const Icon(Icons.play_arrow),label:const Text('Resume'))]),const SizedBox(height:10),OutlinedButton.icon(onPressed:() async {final now=DateTime.now();final date=await showDatePicker(context:context,initialDate:now,firstDate:DateTime(2020),lastDate:now);if(date==null||!context.mounted)return;final time=await showTimePicker(context:context,initialTime:TimeOfDay.now());if(time==null||!context.mounted)return;await play(start:DateTime(date.year,date.month,date.day,time.hour,time.minute));},icon:const Icon(Icons.calendar_month),label:const Text('Select recording date & time')),if(from!=null)Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[TextButton(onPressed:()=>play(start:from!.subtract(const Duration(seconds:30))),child:const Text('−30 sec')),Text(DateFormat('MM/dd HH:mm:ss').format(from!)),TextButton(onPressed:()=>play(start:from!.add(const Duration(seconds:30))),child:const Text('+30 sec'))]),const SizedBox(height:12),Card(child:Padding(padding:const EdgeInsets.all(14),child:Text(output))),const SizedBox(height:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[if(awaitingVoiceReview)const Padding(padding:EdgeInsets.only(bottom:8),child:Text('Voice transcription — edit before executing',style:TextStyle(color:cyan))),Row(children:[Expanded(child:TextField(controller:command,minLines:1,maxLines:3,onChanged:(_){if(awaitingVoiceReview)setState((){});},onSubmitted:(v){setState(()=>awaitingVoiceReview=false);execute(v);},decoration:const InputDecoration(hintText:'Speak or type a command...',border:OutlineInputBorder()))),IconButton(onPressed:toggleMic,tooltip:recording?'Stop listening':'Speak command',icon:Icon(recording?Icons.mic:Icons.mic_none,color:cyan)),IconButton(onPressed:(){setState(()=>awaitingVoiceReview=false);execute(command.text);},tooltip:'Execute edited command',icon:const Icon(Icons.send,color:cyan))]),if(awaitingVoiceReview)TextButton.icon(onPressed:(){command.clear();setState(()=>awaitingVoiceReview=false);},icon:const Icon(Icons.close),label:const Text('Discard transcription'))]),const SizedBox(height:10),Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('People detection',style:TextStyle(fontWeight:FontWeight.bold)),Text(detectionRequested?'Requested — waiting for native AI integration':'Inactive'),const SizedBox(height:4),Text('Detected appearances: ${detectionEvents.length} (no AI frames processed)',style:const TextStyle(color:Colors.white70)),const Text('Snapshots: not yet available',style:TextStyle(color:Colors.white70))]))),const SizedBox(height:10),const Text('Voice input currently uses Android speech recognition, not Whisper. Transcriptions are editable and require confirmation. Offline Whisper and native AI frame detection/snapshots are not yet operational.',style:TextStyle(color:Colors.white54,fontSize:12))]);}
+  Widget _videoPanel() {
+    final active = player;
+    final status = _videoStatus;
+    if (active == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(status ?? 'No video selected', textAlign: TextAlign.center),
+        ),
+      );
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        VlcPlayer(
+          key: ObjectKey(active),
+          controller: active,
+          aspectRatio: 16 / 9,
+          virtualDisplay: false,
+        ),
+        if (_connecting && status != null)
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: ColoredBox(
+              color: Colors.black87,
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(status, textAlign: TextAlign.center),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  @override Widget build(BuildContext context){final n=selected;return ListView(padding:const EdgeInsets.all(16),children:[const Center(child:Icon(Icons.blur_circular,size:82,color:cyan)),const SizedBox(height:6),Center(child:Text('ZVEKTRA ASSISTANT',style:Theme.of(context).textTheme.titleLarge)),const Center(child:Text('Local-first remote video intelligence',style:TextStyle(color:Colors.white60))),const SizedBox(height:18),if(widget.store.devices.isNotEmpty)DropdownButtonFormField<String>(value:n?.id,decoration:const InputDecoration(labelText:'Active NVR',border:OutlineInputBorder()),items:widget.store.devices.map((x)=>DropdownMenuItem(value:x.id,child:Text(x.name))).toList(),onChanged:(x)=>setState(()=>selectedId=x)),if(n!=null)...[const SizedBox(height:12),DropdownButtonFormField<int>(value:channel<=n.maxChannels?channel:1,decoration:const InputDecoration(labelText:'Camera',border:OutlineInputBorder()),items:List.generate(n.maxChannels,(i)=>DropdownMenuItem(value:i+1,child:Text('Camera ${i+1}'))),onChanged:(v)=>setState(()=>channel=v??1))],const SizedBox(height:14),Container(height:230,color:Colors.black,child:_videoPanel()),const SizedBox(height:12),Wrap(alignment:WrapAlignment.center,spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>play(),icon:const Icon(Icons.live_tv),label:const Text('Live')),OutlinedButton.icon(onPressed:()=>play(start:DateTime.now().subtract(const Duration(minutes:10))),icon:const Icon(Icons.history),label:const Text('Playback')),OutlinedButton.icon(onPressed:pausePlayback,icon:const Icon(Icons.pause),label:const Text('Pause')),OutlinedButton.icon(onPressed:resumePlayback,icon:const Icon(Icons.play_arrow),label:const Text('Resume'))]),const SizedBox(height:10),OutlinedButton.icon(onPressed:() async {final now=DateTime.now();final date=await showDatePicker(context:context,initialDate:now,firstDate:DateTime(2020),lastDate:now);if(date==null||!context.mounted)return;final time=await showTimePicker(context:context,initialTime:TimeOfDay.now());if(time==null||!context.mounted)return;await play(start:DateTime(date.year,date.month,date.day,time.hour,time.minute));},icon:const Icon(Icons.calendar_month),label:const Text('Select recording date & time')),if(from!=null)Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[TextButton(onPressed:()=>play(start:from!.subtract(const Duration(seconds:30))),child:const Text('−30 sec')),Text(DateFormat('MM/dd HH:mm:ss').format(from!)),TextButton(onPressed:()=>play(start:from!.add(const Duration(seconds:30))),child:const Text('+30 sec'))]),const SizedBox(height:12),Card(child:Padding(padding:const EdgeInsets.all(14),child:Text(output))),const SizedBox(height:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[if(awaitingVoiceReview)const Padding(padding:EdgeInsets.only(bottom:8),child:Text('Voice transcription — edit before executing',style:TextStyle(color:cyan))),Row(children:[Expanded(child:TextField(controller:command,minLines:1,maxLines:3,onChanged:(_){if(awaitingVoiceReview)setState((){});},onSubmitted:(v){setState(()=>awaitingVoiceReview=false);execute(v);},decoration:const InputDecoration(hintText:'Speak or type a command...',border:OutlineInputBorder()))),IconButton(onPressed:toggleMic,tooltip:recording?'Stop listening':'Speak command',icon:Icon(recording?Icons.mic:Icons.mic_none,color:cyan)),IconButton(onPressed:(){setState(()=>awaitingVoiceReview=false);execute(command.text);},tooltip:'Execute edited command',icon:const Icon(Icons.send,color:cyan))]),if(awaitingVoiceReview)TextButton.icon(onPressed:(){command.clear();setState(()=>awaitingVoiceReview=false);},icon:const Icon(Icons.close),label:const Text('Discard transcription'))]),const SizedBox(height:10),Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('People detection',style:TextStyle(fontWeight:FontWeight.bold)),Text(detectionRequested?'Requested — waiting for native AI integration':'Inactive'),const SizedBox(height:4),Text('Detected appearances: ${detectionEvents.length} (no AI frames processed)',style:const TextStyle(color:Colors.white70)),const Text('Snapshots: not yet available',style:TextStyle(color:Colors.white70))]))),const SizedBox(height:10),const Text('Voice input currently uses Android speech recognition, not Whisper. Transcriptions are editable and require confirmation. Offline Whisper and native AI frame detection/snapshots are not yet operational.',style:TextStyle(color:Colors.white54,fontSize:12))]);}
 }

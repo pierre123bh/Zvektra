@@ -1,7 +1,7 @@
 name: zvektra
 description: Zvektra remote NVR assistant - local-first Android application
 publish_to: none
-version: 0.1.2+3
+version: 0.1.3+4
 environment:
   sdk: '>=3.4.0 <4.0.0'
 dependencies:
@@ -15,6 +15,8 @@ dependencies:
   speech_to_text: ^7.0.0
   permission_handler: ^11.3.1
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
