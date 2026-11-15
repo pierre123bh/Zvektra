@@ -1,0 +1,52 @@
+name: Build Zvektra Android APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Verify application source
+        run: |
+          test -f pubspec.yaml
+          test -f lib/main.dart || { echo "::error::Missing lib/main.dart. Import v2 source before building."; exit 1; }
+      - name: Generate Android project
+        run: flutter create --platforms=android --project-name zvektra .
+      - name: Android permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/AndroidManifest.xml')
+          s=p.read_text()
+          for permission in ('android.permission.INTERNET','android.permission.RECORD_AUDIO'):
+              tag=f'<uses-permission android:name="{permission}" />'
+              if tag not in s:
+                  s=s.replace('<application',f'{tag}\n    <application',1)
+          p.write_text(s)
+          PY
+      - run: flutter pub get
+      - run: flutter analyze
+      - name: Run tests if present
+        run: |
+          if [ -d test ] && find test -name '*_test.dart' | grep -q .; then flutter test; else echo 'No Flutter tests present'; fi
+      - run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: zvektra-android-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 14
