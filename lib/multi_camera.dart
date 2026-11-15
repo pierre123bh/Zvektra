@@ -213,7 +213,7 @@ class _CameraTileState extends State<CameraTile> {
             onChanged: (id) { setState(() { deviceId = id; camera = 1; }); unawaited(connect()); },
           )),
           SizedBox(width: 80, child: DropdownButton<int>(
-            value: selected == null ? 1 : camera.clamp(1, selected.maxChannels),
+            value: selected == null ? 1 : camera.clamp(1, selected.maxChannels).toInt(),
             items: List.generate(selected?.maxChannels ?? 1,
               (i) => DropdownMenuItem(value: i + 1, child: Text('Cam ${i + 1}', style: const TextStyle(fontSize: 12)))),
             onChanged: selected == null ? null : (v) {
