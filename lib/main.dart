@@ -456,7 +456,6 @@ class _AssistantScreenState extends State<AssistantScreen> {
       options: VlcPlayerOptions(
         rtp: VlcRtpOptions([VlcRtpOptions.rtpOverRtsp(true)]),
         advanced: VlcAdvancedOptions([VlcAdvancedOptions.networkCaching(1000)]),
-        extras: [':rtsp-tcp'],
       ),
     );
 

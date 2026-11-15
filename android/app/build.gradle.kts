@@ -48,3 +48,9 @@ android {
 flutter {
     source = "../.."
 }
+
+// Keep the newer native VLC runtime while using the bridge compatible with
+// the published Flutter platform interface.
+dependencies {
+    implementation("org.videolan.android:libvlc-all:3.6.3")
+}

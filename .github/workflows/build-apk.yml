@@ -33,6 +33,7 @@ jobs:
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/Zvektra-ARM64.apk
           python3 - <<'PY'
+          import re
           from pathlib import Path
           from zipfile import ZipFile
           apk = Path('dist/Zvektra-ARM64.apk')
@@ -46,6 +47,12 @@ jobs:
               assert native == {'arm64-v8a'}, native
               assert 'lib/arm64-v8a/libvlc.so' in archive.namelist()
               assert 'lib/arm64-v8a/libapp.so' in archive.namelist()
+              pattern = rb'dev\.flutter\.pigeon\.[A-Za-z0-9_.]*VlcPlayerApi\.initialize'
+              dart = set(re.findall(pattern, archive.read('lib/arm64-v8a/libapp.so')))
+              android = {match for name in archive.namelist() if name.endswith('.dex')
+                         for match in re.findall(pattern, archive.read(name))}
+              print(f'VLC initialization channel: {dart}')
+              assert len(dart) == 1 and dart == android, (dart, android)
           PY
           apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
           "$apksigner" verify --verbose dist/Zvektra-ARM64.apk
