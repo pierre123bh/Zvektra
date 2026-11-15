@@ -67,11 +67,15 @@ jobs:
           for path in realmonitor playback; do
             timeout 12 ffprobe -v error -rtsp_transport tcp               "rtsp://viewer:fixture-pass@127.0.0.1:8554/cam/$path"
           done
+      - name: Build release-mode fixture app
+        run: |
+          flutter pub get
+          flutter build apk --release --target-platform android-x64 \
+            --target integration_test/dahua_stream_test.dart \
+            --dart-define=ZVEKTRA_RTSP_HOST=127.0.0.1
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
           arch: x86_64
           disable-animations: true
-          script: |
-            adb reverse tcp:8554 tcp:8554
-            flutter test integration_test/dahua_stream_test.dart --dart-define=ZVEKTRA_RTSP_HOST=127.0.0.1 || (adb logcat -d -s VLC:V MediaCodec:I flutter:I; exit 1)
+          script: bash integration_test/run_release_rtsp.sh

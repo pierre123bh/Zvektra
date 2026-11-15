@@ -89,5 +89,6 @@ void main() {
       }
       expect(decoded, isTrue, reason: '$mode fixture did not decode: $status');
     }
+    debugPrint('ZVEKTRA_RTSP_RELEASE_FRAMES_OK');
   });
 }
