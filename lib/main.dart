@@ -1,3 +1,4 @@
+import 'multi_camera.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -116,7 +117,7 @@ class _ZvektraAppState extends State<ZvektraApp> {
 class Home extends StatefulWidget {final DeviceStore store;const Home({super.key,required this.store});@override State<Home> createState()=>_HomeState();}
 class _HomeState extends State<Home> {
   int tab=0;
-  @override Widget build(BuildContext context)=>AnimatedBuilder(animation:widget.store,builder:(context,_)=>Scaffold(appBar:AppBar(title:const Text('ZVEKTRA',style:TextStyle(fontWeight:FontWeight.w800,letterSpacing:3)),backgroundColor:navy,actions:[const Padding(padding:EdgeInsets.only(right:14),child:Icon(Icons.shield_outlined,color:cyan))]),body:tab==0?AssistantScreen(store:widget.store):DevicesScreen(store:widget.store),bottomNavigationBar:NavigationBar(selectedIndex:tab,onDestinationSelected:(x)=>setState(()=>tab=x),destinations:const [NavigationDestination(icon:Icon(Icons.graphic_eq),label:'Assistant'),NavigationDestination(icon:Icon(Icons.dns_outlined),label:'Devices')])));
+  @override Widget build(BuildContext context)=>AnimatedBuilder(animation:widget.store,builder:(context,_)=>Scaffold(appBar:AppBar(title:const Text('ZVEKTRA',style:TextStyle(fontWeight:FontWeight.w800,letterSpacing:3)),backgroundColor:navy,actions:[const Padding(padding:EdgeInsets.only(right:14),child:Icon(Icons.shield_outlined,color:cyan))]),body:tab==0?AssistantScreen(store:widget.store):tab==1?MultiCameraScreen(store:widget.store):DevicesScreen(store:widget.store),bottomNavigationBar:NavigationBar(selectedIndex:tab,onDestinationSelected:(x)=>setState(()=>tab=x),destinations:const [NavigationDestination(icon:Icon(Icons.graphic_eq),label:'Assistant'),NavigationDestination(icon:Icon(Icons.grid_view),label:'8 Cameras'),NavigationDestination(icon:Icon(Icons.dns_outlined),label:'Devices')])));
 }
 
 class DevicesScreen extends StatelessWidget {
