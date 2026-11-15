@@ -75,8 +75,7 @@ flutter {
 // the published Flutter platform interface.
 dependencies {
     implementation("org.videolan.android:libvlc-all:3.6.3")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:runner:1.2.0")
 }
 
 val whisperAssets = layout.buildDirectory.dir("generated/whisperAssets/whisper")

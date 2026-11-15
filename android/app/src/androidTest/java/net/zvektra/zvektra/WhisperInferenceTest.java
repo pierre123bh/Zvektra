@@ -3,7 +3,6 @@ package net.zvektra.zvektra;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
-import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -12,9 +11,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 
-@RunWith(AndroidJUnit4.class)
 public class WhisperInferenceTest {
     @Test
     public void transcribesARealAudioSampleWithTheBundledModel() throws Exception {
