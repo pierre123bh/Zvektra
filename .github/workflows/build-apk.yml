@@ -53,6 +53,15 @@ jobs:
                          for match in re.findall(pattern, archive.read(name))}
               print(f'VLC initialization channel: {dart}')
               assert len(dart) == 1 and dart == android, (dart, android)
+              dex = b''.join(archive.read(name) for name in archive.namelist()
+                             if name.endswith('.dex'))
+              jni = archive.read('lib/arm64-v8a/libvlcjni.so')
+              class_names = set(re.findall(
+                  rb'org/videolan/libvlc/[A-Za-z0-9_$]+(?:/[A-Za-z0-9_$]+)*', jni))
+              missing = sorted(name for name in class_names
+                               if b'L' + name + b';' not in dex)
+              assert class_names and not missing, missing
+              assert b'dispatchEventFromNative' in dex, 'Missing LibVLC JNI callback'
           PY
           apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
           "$apksigner" verify --verbose dist/Zvektra-ARM64.apk
