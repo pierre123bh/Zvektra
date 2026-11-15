@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <queries><intent><action android:name="android.speech.RecognitionService" /></intent></queries>
     <application android:allowBackup="false" android:usesCleartextTraffic="true"
-        android:label="Zvektra Whisper"
+        android:label="Zvektra"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
