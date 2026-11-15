@@ -30,9 +30,12 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    final list = find.descendant(
+      of: find.byType(ListView), matching: find.byType(Scrollable),
+    ).first;
     for (final mode in ['Live', 'Playback']) {
-      final button = find.widgetWithText(OutlinedButton, mode);
-      await tester.ensureVisible(button);
+      final button = find.text(mode);
+      await tester.scrollUntilVisible(button, 100, scrollable: list);
       await tester.tap(button);
       bool decoded = false;
       String status = '';
