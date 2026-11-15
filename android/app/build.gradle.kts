@@ -29,25 +29,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        externalNativeBuild {
-            cmake {
-                arguments("-DANDROID_STL=c++_static", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
-            }
-        }
     }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-
-    androidResources {
-        noCompress += "bin"
-    }
-
-    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/whisperAssets"))
 
     packaging {
         jniLibs {
@@ -76,15 +58,4 @@ flutter {
 dependencies {
     implementation("org.videolan.android:libvlc-all:3.6.3")
     androidTestImplementation("androidx.test:runner:1.2.0")
-}
-
-val whisperAssets = layout.buildDirectory.dir("generated/whisperAssets/whisper")
-val prepareWhisperModel by tasks.registering(Exec::class) {
-    val script = rootProject.file("../tools/prepare-whisper-model.sh")
-    inputs.file(script)
-    outputs.file(whisperAssets.map { it.file("ggml-tiny-q5_1.bin") })
-    commandLine("bash", script.absolutePath, whisperAssets.get().asFile.absolutePath)
-}
-tasks.named("preBuild") {
-    dependsOn(prepareWhisperModel)
 }
