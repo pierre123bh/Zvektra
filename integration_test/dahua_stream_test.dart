@@ -24,7 +24,7 @@ class TestNvrStore extends DeviceStore {
 Future<bool> displaysFixtureColors(VlcPlayerController controller) async {
   if (!controller.value.isInitialized || !controller.value.isPlaying) return false;
   final bytes = await controller.takeSnapshot();
-  if (bytes == null || bytes.isEmpty) return false;
+  if (bytes.isEmpty) return false;
   final codec = await ui.instantiateImageCodec(bytes, targetWidth: 32);
   try {
     final frame = await codec.getNextFrame();
