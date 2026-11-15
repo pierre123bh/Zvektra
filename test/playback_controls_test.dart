@@ -36,6 +36,9 @@ void main() {
       home: Scaffold(body: AssistantScreen(store: store)),
     ));
 
+    final streamList = find.descendant(
+      of: find.byType(ListView), matching: find.byType(Scrollable),
+    ).first;
     await tester.ensureVisible(find.text('Live'));
     await tester.tap(find.text('Live'));
     await tester.pump();
@@ -45,7 +48,8 @@ void main() {
     await tester.pump();
     store.pendingReads.first.complete(null);
     await tester.pump();
-    await tester.scrollUntilVisible(find.text('Connection cancelled.'), 120);
+    await tester.scrollUntilVisible(find.text('Connection cancelled.'), 120, scrollable: streamList,
+    );
     expect(find.text('Connection cancelled.'), findsOneWidget);
     expect(find.text('Edit the NVR and enter its password.'), findsNothing);
 
@@ -57,6 +61,7 @@ void main() {
     await tester.pump();
     await tester.scrollUntilVisible(
       find.text('Edit the NVR and enter its password.'), 120,
+      scrollable: streamList,
     );
     expect(find.text('Edit the NVR and enter its password.'), findsOneWidget);
   });
