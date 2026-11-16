@@ -60,7 +60,8 @@ flutter {
 // the published Flutter platform interface.
 dependencies {
     implementation("org.videolan.android:libvlc-all:3.6.3")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
+    // 1.20.0 keeps the app compatible with its Android 6 minimum.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     androidTestImplementation("androidx.test:runner:1.2.0")
 }
 
@@ -68,7 +69,7 @@ dependencies {
 val detectionAssets = layout.buildDirectory.dir("generated/detectionAssets")
 val detectionModels = mapOf(
     "people" to (
-        "https://huggingface.co/onnxmodelzoo/ssd_mobilenet_v1_12-int8/resolve/main/ssd_mobilenet_v1_12-int8.onnx" to
+        "https://huggingface.co/onnxmodelzoo/ssd_mobilenet_v1_12-int8/resolve/929618539097dbeb779c13aed75dfe346d016d48/ssd_mobilenet_v1_12-int8.onnx" to
         "2b79e6a7fb1ec6a33f332b9b10d82d9de4b7b49dcd26b5946921bb356895c954"
     ),
     "plates" to (
