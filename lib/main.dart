@@ -119,7 +119,7 @@ class _ZvektraAppState extends State<ZvektraApp> {
 class Home extends StatefulWidget {final DeviceStore store;const Home({super.key,required this.store});@override State<Home> createState()=>_HomeState();}
 class _HomeState extends State<Home> {
   int tab=0;
-  @override Widget build(BuildContext context)=>AnimatedBuilder(animation:widget.store,builder:(context,_)=>Scaffold(appBar:AppBar(title:const Text('ZVEKTRA',style:TextStyle(fontWeight:FontWeight.w800,letterSpacing:3)),backgroundColor:navy,actions:[const Padding(padding:EdgeInsets.only(right:14),child:Icon(Icons.shield_outlined,color:cyan))]),body:tab==0?AssistantScreen(store:widget.store):tab==1?MultiCameraScreen(store:widget.store):DevicesScreen(store:widget.store),bottomNavigationBar:NavigationBar(selectedIndex:tab,onDestinationSelected:(x)=>setState(()=>tab=x),destinations:const [NavigationDestination(icon:Icon(Icons.graphic_eq),label:'Assistant'),NavigationDestination(icon:Icon(Icons.grid_view),label:'8 Cameras'),NavigationDestination(icon:Icon(Icons.dns_outlined),label:'Devices')])));
+  @override Widget build(BuildContext context)=>AnimatedBuilder(animation:widget.store,builder:(context,_)=>Scaffold(appBar:AppBar(title:const Row(mainAxisSize:MainAxisSize.min,children:[Icon(Icons.videocam_rounded,color:cyan,size:24),SizedBox(width:10),Text('ZVEKTRA',style:TextStyle(fontWeight:FontWeight.w900,letterSpacing:2.5,fontSize:21))]),backgroundColor:navy,actions:[const Padding(padding:EdgeInsets.only(right:14),child:Icon(Icons.shield_outlined,color:cyan))]),body:tab==0?AssistantScreen(store:widget.store):tab==1?MultiCameraScreen(store:widget.store):DevicesScreen(store:widget.store),bottomNavigationBar:NavigationBar(selectedIndex:tab,onDestinationSelected:(x)=>setState(()=>tab=x),destinations:const [NavigationDestination(icon:Icon(Icons.auto_awesome_outlined),selectedIcon:Icon(Icons.auto_awesome),label:'Assistant'),NavigationDestination(icon:Icon(Icons.grid_view_outlined),selectedIcon:Icon(Icons.grid_view_rounded),label:'8 Cameras'),NavigationDestination(icon:Icon(Icons.dns_outlined),label:'Devices')])));
 }
 
 class DevicesScreen extends StatelessWidget {
@@ -685,13 +685,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (text.contains('record') || text.contains('playback') || text.contains('play back')) {
       final now = DateTime.now();
       DateTime date = _playbackDate;
-      if (RegExp(r'\\btoday\\b').hasMatch(text)) {
+      if (RegExp(r'\btoday\b').hasMatch(text)) {
         date = DateTime(now.year, now.month, now.day);
-      } else if (RegExp(r'\\byesterday\\b').hasMatch(text)) {
+      } else if (RegExp(r'\byesterday\b').hasMatch(text)) {
         date = DateTime(now.year, now.month, now.day - 1);
       }
       final range = RegExp(
-        r'\\bfrom\\s+(\\d{1,2})(?::(\\d{1,2}))?\\s*(am|pm|a\\.m\\.|p\\.m\\.)?\\s+to\\s+(\\d{1,2})(?::(\\d{1,2}))?\\s*(am|pm|a\\.m\\.|p\\.m\\.)?',
+        r'\bfrom\s+(\d{1,2})(?::(\d{1,2}))?\s*(am|pm|a\.m\.|p\.m\.)?\s+to\s+(\d{1,2})(?::(\d{1,2}))?\s*(am|pm|a\.m\.|p\.m\.)?',
       ).firstMatch(text);
       if (range == null) {
         setState(() => output = 'Use: playback cam3 today from 6:00 am to 6:06 am');
