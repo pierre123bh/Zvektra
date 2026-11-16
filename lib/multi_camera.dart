@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_vlc_player/flutter_vlc_player.dart';
 import 'main.dart';
+import 'zvektra_theme.dart';
 
 /// Independent players: changing a tile never changes another tile.
 class MultiCameraScreen extends StatefulWidget {
@@ -18,7 +19,14 @@ class _MultiCameraScreenState extends State<MultiCameraScreen> {
     return Column(children: [
       SizedBox(height: 42, child: Row(children: [
         const SizedBox(width: 8),
-        const Text('LIVE', style: TextStyle(color: cyan, fontWeight: FontWeight.bold)),
+        const DecoratedBox(
+          decoration: BoxDecoration(color: Color(0xFF163735), borderRadius: BorderRadius.all(Radius.circular(10))),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            child: Text('LIVE', style: TextStyle(color: cyan, fontSize: 11,
+                fontWeight: FontWeight.w800, letterSpacing: 1.4)),
+          ),
+        ),
         const Spacer(),
         const Text('Windows '),
         DropdownButton<int>(
@@ -154,7 +162,7 @@ class _CameraTileState extends State<CameraTile> {
     }
     return Container(
       clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(color: const Color(0xFF0B1524), borderRadius: BorderRadius.circular(12), border: Border.all(color: cyan.withValues(alpha: 0.3))),
+      decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(15), border: Border.all(color: panelBorder)),
       child: Column(children: [
         SizedBox(height: 42, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6),child: Row(children: [
           Expanded(child: DropdownButton<String>(
@@ -168,7 +176,7 @@ class _CameraTileState extends State<CameraTile> {
           SizedBox(width: 80, child: DropdownButton<int>(
             value: selected == null ? 1 : camera.clamp(1, selected.maxChannels).toInt(),
             items: List.generate(selected?.maxChannels ?? 1,
-              (i) => DropdownMenuItem(value: i + 1, child: Text('Cam ${i + 1}', style: const TextStyle(fontSize: 12)))),
+              (i) => DropdownMenuItem(value: i + 1, child: Text('Cam ${i + 1}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)))),
             onChanged: selected == null ? null : (v) {
               if (v != null) { setState(() => camera = v); unawaited(connect()); }
             },

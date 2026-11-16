@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_vlc_player/flutter_vlc_player.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:zvektra/main.dart';
+import 'package:zvektra/zvektra_theme.dart';
 import 'package:zvektra/multi_camera.dart';
 import 'package:zvektra/playback_detection_results.dart';
 
@@ -68,7 +69,7 @@ void main() {
   testWidgets('Release Android app detects people and plates from recorded RTSP frames',
       (tester) async {
     await tester.pumpWidget(MaterialApp(
-      theme: ThemeData.dark(),
+      theme: buildZvektraTheme(),
       home: Home(store: TestNvrStore()),
     ));
     await tester.pumpAndSettle();

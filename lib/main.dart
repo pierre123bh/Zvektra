@@ -1,6 +1,7 @@
 import 'arabic_playback_command.dart';
 import 'multi_camera.dart';
 import 'playback_detection_results.dart';
+import 'zvektra_theme.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -16,10 +17,6 @@ void main() { WidgetsFlutterBinding.ensureInitialized(); runApp(const ZvektraApp
 
 const host = String.fromEnvironment('ZVEKTRA_RTSP_HOST', defaultValue: 'zvektra.net');
 const manufacturers = ['Dahua', 'Hikvision', 'Uniview', 'MEye', 'Topcam'];
-const navy = Color(0xFF0D1725);
-const cyan = Color(0xFF62E2E6);
-const surface = Color(0xFF142439);
-const accent = Color(0xFF8B9CFF);
 
 class Nvr {
   final String id, name, manufacturer, port, username;
@@ -131,13 +128,46 @@ class ZvektraApp extends StatefulWidget { const ZvektraApp({super.key}); @overri
 class _ZvektraAppState extends State<ZvektraApp> {
   final store=DeviceStore();
   @override void initState(){super.initState();store.load();}
-  @override Widget build(BuildContext context)=>MaterialApp(title:'Zvektra',debugShowCheckedModeBanner:false,theme:ThemeData(brightness:Brightness.dark,scaffoldBackgroundColor:navy,colorScheme:ColorScheme.fromSeed(seedColor:cyan,brightness:Brightness.dark),useMaterial3:true,cardTheme:CardThemeData(color:surface,elevation:0,shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(18))),inputDecorationTheme:InputDecorationTheme(filled:true,fillColor:surface,border:OutlineInputBorder(borderRadius:BorderRadius.circular(14),borderSide:BorderSide.none)),navigationBarTheme:NavigationBarThemeData(backgroundColor:surface,indicatorColor:cyan.withValues(alpha:0.18)),appBarTheme:const AppBarTheme(backgroundColor:navy,centerTitle:false,elevation:0)),home:Home(store:store));
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'Zvektra',
+    debugShowCheckedModeBanner: false,
+    theme: buildZvektraTheme(),
+    home: Home(store: store),
+  );
 }
 
 class Home extends StatefulWidget {final DeviceStore store;const Home({super.key,required this.store});@override State<Home> createState()=>_HomeState();}
 class _HomeState extends State<Home> {
   int tab=0;
-  @override Widget build(BuildContext context)=>AnimatedBuilder(animation:widget.store,builder:(context,_)=>Scaffold(appBar:AppBar(title:const Row(mainAxisSize:MainAxisSize.min,children:[Icon(Icons.videocam_rounded,color:cyan,size:24),SizedBox(width:10),Text('ZVEKTRA',style:TextStyle(fontWeight:FontWeight.w900,letterSpacing:2.5,fontSize:21))]),backgroundColor:navy,actions:[const Padding(padding:EdgeInsets.only(right:14),child:Icon(Icons.shield_outlined,color:cyan))]),body:tab==0?AssistantScreen(store:widget.store):tab==1?MultiCameraScreen(store:widget.store):DevicesScreen(store:widget.store),bottomNavigationBar:NavigationBar(selectedIndex:tab,onDestinationSelected:(x)=>setState(()=>tab=x),destinations:const [NavigationDestination(icon:Icon(Icons.auto_awesome_outlined),selectedIcon:Icon(Icons.auto_awesome),label:'Assistant'),NavigationDestination(icon:Icon(Icons.grid_view_outlined),selectedIcon:Icon(Icons.grid_view_rounded),label:'8 Cameras'),NavigationDestination(icon:Icon(Icons.dns_outlined),label:'Devices')])));
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: widget.store,
+    builder: (context, _) => Scaffold(
+      appBar: AppBar(
+        title: const ZvektraWordmark(),
+        flexibleSpace: const DecoratedBox(decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [navy, Color(0xFF182641)]),
+          border: Border(bottom: BorderSide(color: panelBorder)),
+        )),
+        actions: const [
+          Padding(padding: EdgeInsets.only(right: 14), child: Icon(Icons.shield_outlined, color: accent)),
+        ],
+      ),
+      backgroundColor: navy,
+      body: tab == 0 ? AssistantScreen(store: widget.store)
+          : tab == 1 ? MultiCameraScreen(store: widget.store) : DevicesScreen(store: widget.store),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (x) => setState(() => tab = x),
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.auto_awesome_outlined), selectedIcon: Icon(Icons.auto_awesome), label: 'Assistant'),
+          NavigationDestination(icon: Icon(Icons.grid_view_outlined), selectedIcon: Icon(Icons.grid_view_rounded), label: '8 Cameras'),
+          NavigationDestination(icon: Icon(Icons.dns_outlined), label: 'Devices'),
+        ],
+      ),
+    ),
+  );
 }
 
 class DevicesScreen extends StatelessWidget {
@@ -1149,7 +1179,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       Expanded(child: Container(
         width: double.infinity,
         clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(12),border: Border.all(color:cyan.withValues(alpha:0.2))),
+        decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(16), border: Border.all(color: panelBorder)),
         child: _videoPanel(),
       )),
       if (_detectionError case final message?)

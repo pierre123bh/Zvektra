@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'zvektra_theme.dart';
 
 /// A detection from an actual analyzed playback frame, never a placeholder.
 enum PlaybackDetectionKind { person, licensePlate }
@@ -41,11 +42,11 @@ class PlaybackDetectionResults extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(children: [
-            const Icon(Icons.person_outline, size: 18),
-            Text(' People: $peopleCount'),
+            const Icon(Icons.person_outline, size: 18, color: cyan),
+            Text(' People: $peopleCount', style: const TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(width: 16),
-            const Icon(Icons.directions_car_outlined, size: 18),
-            Text(' Vehicles: $plateCount'),
+            const Icon(Icons.directions_car_outlined, size: 18, color: accent),
+            Text(' Vehicles: $plateCount', style: const TextStyle(fontWeight: FontWeight.w700)),
             const Spacer(),
             if (running) const SizedBox(width: 14, height: 14,
               child: CircularProgressIndicator(strokeWidth: 2)),
@@ -73,7 +74,10 @@ class PlaybackDetectionResults extends StatelessWidget {
                       child: Column(children: [
                     SizedBox(
                       width: 112, height: 76,
-                      child: Image.memory(detection.snapshot, fit: BoxFit.contain),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.memory(detection.snapshot, fit: BoxFit.contain),
+                      ),
                     ),
                     Text(
                       '${detection.kind == PlaybackDetectionKind.person ? 'Person' : 'Vehicle'} '
