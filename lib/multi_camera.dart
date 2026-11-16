@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_vlc_player/flutter_vlc_player.dart';
-import 'package:intl/intl.dart';
 import 'main.dart';
 
 /// Independent players: changing a tile never changes another tile.
@@ -14,73 +13,21 @@ class MultiCameraScreen extends StatefulWidget {
 
 class _MultiCameraScreenState extends State<MultiCameraScreen> {
   int count = 4;
-  DateTime? start;
-  DateTime? end;
-  bool playback = false;
-
-  Future<DateTime?> chooseDateTime(DateTime initial) async {
-    final date = await showDatePicker(
-      context: context, initialDate: initial,
-      firstDate: DateTime(2020), lastDate: DateTime.now(),
-    );
-    if (date == null || !mounted) return null;
-    final time = await showTimePicker(
-      context: context, initialTime: TimeOfDay.fromDateTime(initial),
-    );
-    if (time == null) return null;
-    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
-  }
-
-  void startPlayback() {
-    if (start == null || end == null || !end!.isAfter(start!)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Choose an end date/time after the start date/time.')),
-      );
-      return;
-    }
-    setState(() => playback = true);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final format = DateFormat('dd MMM yyyy  HH:mm');
     return Column(children: [
-      Padding(
-        padding: const EdgeInsets.all(8),
-        child: Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
-          const Text('Windows'),
-          DropdownButton<int>(
-            value: count,
-            items: [1,2,4,6,8].map((v) => DropdownMenuItem(value: v, child: Text('$v'))).toList(),
-            onChanged: (v) { if (v != null) setState(() => count = v); },
-          ),
-          OutlinedButton.icon(
-            onPressed: () => setState(() => playback = false),
-            icon: const Icon(Icons.live_tv), label: const Text('Live'),
-          ),
-          OutlinedButton.icon(
-            onPressed: () async {
-              final result = await chooseDateTime(start ?? DateTime.now().subtract(const Duration(hours: 1)));
-              if (result != null) setState(() { start = result; playback = false; });
-            },
-            icon: const Icon(Icons.calendar_today),
-            label: Text(start == null ? 'From date/time' : format.format(start!)),
-          ),
-          OutlinedButton.icon(
-            onPressed: () async {
-              final result = await chooseDateTime(end ?? DateTime.now());
-              if (result != null) setState(() { end = result; playback = false; });
-            },
-            icon: const Icon(Icons.event),
-            label: Text(end == null ? 'To date/time' : format.format(end!)),
-          ),
-          FilledButton.icon(
-            onPressed: startPlayback,
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Play range'),
-          ),
-        ]),
-      ),
+      SizedBox(height: 42, child: Row(children: [
+        const SizedBox(width: 8),
+        const Text('LIVE', style: TextStyle(color: cyan, fontWeight: FontWeight.bold)),
+        const Spacer(),
+        const Text('Windows '),
+        DropdownButton<int>(
+          value: count,
+          items: [1,2,4,6,8].map((v) => DropdownMenuItem(value: v, child: Text('$v'))).toList(),
+          onChanged: (v) { if (v != null) setState(() => count = v); },
+        ),
+        const SizedBox(width: 8),
+      ])),
       Expanded(child: LayoutBuilder(builder: (context, constraints) {
         final columns = count == 1 ? 1 : count == 2 ? 2 : count <= 4 ? 2 : 2;
         final rows = (count / columns).ceil();
@@ -89,13 +36,13 @@ class _MultiCameraScreenState extends State<MultiCameraScreen> {
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
             childAspectRatio: (constraints.maxWidth / columns) /
-                ((constraints.maxHeight / rows).clamp(120.0, 10000.0)),
+                (constraints.maxHeight / rows),
             crossAxisSpacing: 6, mainAxisSpacing: 6,
           ),
           itemCount: count,
           itemBuilder: (context, i) => CameraTile(
             key: ValueKey('camera-tile-$i'), store: widget.store,
-            playback: playback, start: start, end: end,
+            
           ),
         );
       })),
@@ -105,10 +52,7 @@ class _MultiCameraScreenState extends State<MultiCameraScreen> {
 
 class CameraTile extends StatefulWidget {
   final DeviceStore store;
-  final bool playback;
-  final DateTime? start;
-  final DateTime? end;
-  const CameraTile({super.key, required this.store, required this.playback, this.start, this.end});
+  const CameraTile({super.key, required this.store});
   @override State<CameraTile> createState() => _CameraTileState();
 }
 
@@ -120,14 +64,6 @@ class _CameraTileState extends State<CameraTile> {
   int generation = 0;
   Timer? timeout;
   bool started = false;
-
-  @override void didUpdateWidget(covariant CameraTile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.playback != widget.playback ||
-        oldWidget.start != widget.start || oldWidget.end != widget.end) {
-      if (deviceId != null) unawaited(connect());
-    }
-  }
 
   @override void dispose() {
     ++generation;
@@ -151,9 +87,6 @@ class _CameraTileState extends State<CameraTile> {
       if (device.id == deviceId) { nvr = device; break; }
     }
     if (nvr == null) { setState(() => status = 'Select an NVR'); return; }
-    if (widget.playback && (widget.start == null || widget.end == null)) {
-      setState(() => status = 'Select playback dates'); return;
-    }
     String? password;
     try { password = await widget.store.password(nvr.id); } catch (_) {}
     if (!mounted || request != generation) return;
@@ -162,11 +95,9 @@ class _CameraTileState extends State<CameraTile> {
     }
     final url = StreamBuilderService.url(
       nvr, camera, password: password,
-      start: widget.playback ? widget.start : null,
-      end: widget.playback ? widget.end : null,
     );
     if (url == null) {
-      setState(() => status = 'Playback/stream unsupported for ${nvr!.manufacturer}');
+      setState(() => status = 'Live stream unsupported for ${nvr!.manufacturer}');
       return;
     }
     final next = VlcPlayerController.network(
