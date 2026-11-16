@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zvektra/main.dart';
 
 void main() {
-  testWidgets('failed save keeps the form open and retry persists the NVR',
+  testWidgets('failed save keeps the form open and retry persists the device',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
     const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
@@ -31,7 +31,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(body: DevicesScreen(store: store)),
     ));
-    await tester.tap(find.text('Add NVR'));
+    await tester.tap(find.text('Add Device'));
     await tester.pumpAndSettle();
     expect(find.text('Hostname'), findsNothing);
     expect(find.text(host), findsNothing);
@@ -44,7 +44,7 @@ void main() {
 
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
-    expect(find.text('Could not save the NVR. Try again.'), findsOneWidget);
+    expect(find.text('Could not save the device. Try again.'), findsOneWidget);
     expect(store.devices, isEmpty);
 
     failWrite = false;

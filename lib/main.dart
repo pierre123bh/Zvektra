@@ -172,7 +172,7 @@ class _HomeState extends State<Home> {
 
 class DevicesScreen extends StatelessWidget {
   final DeviceStore store;const DevicesScreen({super.key,required this.store});
-  @override Widget build(BuildContext context)=>ListView(padding:const EdgeInsets.all(16),children:[Row(children:[Expanded(child:Text('My Devices (${store.devices.length}/5)',style:Theme.of(context).textTheme.titleLarge)),FilledButton.icon(onPressed:store.devices.length>=5?null:()=>showDeviceForm(context,store,null),icon:const Icon(Icons.add),label:const Text('Add NVR'))]),const SizedBox(height:12),...store.devices.map((n)=>Card(child:ListTile(leading:const Icon(Icons.dns_outlined),title:Text(n.name),subtitle:Text('${n.manufacturer}  •  Zvektra Port ${n.port}  •  ${n.maxChannels} channels'),trailing:Wrap(spacing:0,children:[IconButton(tooltip:'Edit',onPressed:()=>showDeviceForm(context,store,n),icon:const Icon(Icons.edit_outlined)),IconButton(tooltip:'Delete',onPressed:() async {final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Delete device?'),content:Text('Remove ${n.name} and its stored credentials?'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),TextButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Delete'))]));if(ok==true) await store.remove(n.id);},icon:const Icon(Icons.delete_outline))])))),if(store.devices.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Text('Add an NVR to begin.'))]);
+  @override Widget build(BuildContext context)=>ListView(padding:const EdgeInsets.all(16),children:[Row(children:[Expanded(child:Text('My Devices (${store.devices.length}/5)',style:Theme.of(context).textTheme.titleLarge)),FilledButton.icon(onPressed:store.devices.length>=5?null:()=>showDeviceForm(context,store,null),icon:const Icon(Icons.add),label:const Text('Add Device'))]),const SizedBox(height:12),...store.devices.map((n)=>Card(child:ListTile(leading:const Icon(Icons.dns_outlined),title:Text(n.name),subtitle:Text('${n.manufacturer}  •  Zvektra Port ${n.port}  •  ${n.maxChannels} channels'),trailing:Wrap(spacing:0,children:[IconButton(tooltip:'Edit',onPressed:()=>showDeviceForm(context,store,n),icon:const Icon(Icons.edit_outlined)),IconButton(tooltip:'Delete',onPressed:() async {final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Delete device?'),content:Text('Remove ${n.name} and its stored credentials?'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),TextButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Delete'))]));if(ok==true) await store.remove(n.id);},icon:const Icon(Icons.delete_outline))])))),if(store.devices.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Text('Add a device to begin.'))]);
 }
 
 Future<void> showDeviceForm(BuildContext context, DeviceStore store, Nvr? existing) {
@@ -242,13 +242,13 @@ class _DeviceFormState extends State<_DeviceForm> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = 'Could not save the NVR. Try again.';
+        _error = 'Could not save the device. Try again.';
       });
     } on StateError {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = 'Could not save the NVR. Try again.';
+        _error = 'Could not save the device. Try again.';
       });
     }
   }
@@ -262,7 +262,7 @@ class _DeviceFormState extends State<_DeviceForm> {
     return PopScope(
       canPop: !_saving,
       child: AlertDialog(
-        title: Text(isNew ? 'Add NVR' : 'Edit NVR'),
+        title: Text(isNew ? 'Add Device' : 'Edit Device'),
         content: SizedBox(
           width: 430,
           child: Form(
@@ -431,7 +431,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       // This screen is also used in Flutter-only tests.
     }
   }
-  String output='Ready. Select an NVR and tell Zvektra what to play.';
+  String output='Ready. Select a device and tell Zvektra what to play.';
   bool awaitingVoiceReview=false;
   static const _detection = MethodChannel('net.zvektra/playback_detection');
   static const _snapshotLimit = 200;
@@ -527,7 +527,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   Future<void> play({DateTime? start, DateTime? end, Nvr? device, int? camera}) async {
     final target = device ?? selected;
     if (target == null) {
-      setState(() => output = 'Add an NVR in Devices first.');
+      setState(() => output = 'Add a device in Devices first.');
       return;
     }
 
@@ -564,7 +564,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     await _playerTeardown;
     if (!_isCurrent(request)) return;
     if (port == null || port < 1 || port > 65535) {
-      _finishAttempt(request, 'Edit the NVR and enter a valid RTSP port.');
+      _finishAttempt(request, 'Edit the device and enter a valid RTSP port.');
       return;
     }
 
@@ -572,12 +572,12 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     try {
       password = await widget.store.password(target.id);
     } on Exception {
-      _finishAttempt(request, 'Could not read the password. Edit the NVR and save it again.');
+      _finishAttempt(request, 'Could not read the password. Edit the device and save it again.');
       return;
     }
     if (!_isCurrent(request)) return;
     if (password == null || password.isEmpty) {
-      _finishAttempt(request, 'Edit the NVR and enter its password.');
+      _finishAttempt(request, 'Edit the device and enter its password.');
       return;
     }
     final link = StreamBuilderService.url(
@@ -644,7 +644,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       if (!await _checkPort(request, port)) {
         _finishAttempt(
           request,
-          'Could not reach RTSP port $port. Check the NVR is online and this '
+          'Could not reach RTSP port $port. Check the device is online and this '
           'TCP port is forwarded to it.',
         );
         return;
@@ -661,7 +661,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         return;
       }
       _finishAttempt(request, 'RTSP port $port is reachable, but '
-          '${mode.toLowerCase()} failed for $source. Check the NVR login and '
+          '${mode.toLowerCase()} failed for $source. Check the device login and '
           '${mode == 'Recorded playback' ? 'recording time.' : 'camera stream.'}');
     }
 
@@ -1089,6 +1089,14 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     ));
   }
 
+  Widget _playbackPicker(String label, VoidCallback onPressed) => Expanded(
+    child: OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 4)),
+      child: FittedBox(fit: BoxFit.scaleDown, child: Text(label, maxLines: 1)),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final n = selected;
@@ -1096,7 +1104,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       Padding(padding: const EdgeInsets.fromLTRB(8, 4, 8, 2), child: Row(children: [
         Expanded(child: DropdownButtonFormField<String>(
           value: n?.id, isExpanded: true,
-          decoration: const InputDecoration(labelText: 'NVR', isDense: true, border: OutlineInputBorder()),
+          decoration: const InputDecoration(labelText: 'Device', isDense: true, border: OutlineInputBorder()),
           items: widget.store.devices.map((x) => DropdownMenuItem(
             value: x.id, child: Text(x.name, overflow: TextOverflow.ellipsis),
           )).toList(),
@@ -1121,23 +1129,16 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           },
         )),
       ])),
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
-          OutlinedButton(
-            onPressed: _selectPlaybackDate,
-            child: Text(DateFormat('dd MMM yyyy').format(_playbackDate)),
-          ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        child: Row(children: [
+          _playbackPicker(DateFormat('dd MMM yyyy').format(_playbackDate), _selectPlaybackDate),
           const SizedBox(width: 4),
-          OutlinedButton(
-            onPressed: () => _selectPlaybackTime(true),
-            child: Text('From ${_playbackFrom.format(context)}'),
-          ),
+          _playbackPicker('From ${_playbackFrom.format(context)}', () => _selectPlaybackTime(true)),
           const SizedBox(width: 4),
-          OutlinedButton(
-            onPressed: () => _selectPlaybackTime(false),
-            child: Text('To ${_playbackTo.format(context)}'),
-          ),
-        ]))),
+          _playbackPicker('To ${_playbackTo.format(context)}', () => _selectPlaybackTime(false)),
+        ]),
+      ),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Wrap(
         crossAxisAlignment: WrapCrossAlignment.center,
         alignment: WrapAlignment.spaceBetween,

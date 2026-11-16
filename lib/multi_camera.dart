@@ -68,7 +68,7 @@ class _CameraTileState extends State<CameraTile> {
   String? deviceId;
   int camera = 1;
   VlcPlayerController? controller;
-  String status = 'Choose an NVR and camera';
+  String status = 'Choose a device and camera';
   int generation = 0;
   Timer? timeout;
   bool started = false;
@@ -94,12 +94,12 @@ class _CameraTileState extends State<CameraTile> {
     for (final device in widget.store.devices) {
       if (device.id == deviceId) { nvr = device; break; }
     }
-    if (nvr == null) { setState(() => status = 'Select an NVR'); return; }
+    if (nvr == null) { setState(() => status = 'Select a device'); return; }
     String? password;
     try { password = await widget.store.password(nvr.id); } catch (_) {}
     if (!mounted || request != generation) return;
     if (password == null || password.isEmpty) {
-      setState(() => status = 'Missing NVR credentials'); return;
+      setState(() => status = 'Missing device credentials'); return;
     }
     final url = StreamBuilderService.url(
       nvr, camera, password: password,
@@ -140,7 +140,7 @@ class _CameraTileState extends State<CameraTile> {
     next.addListener(() {
       if (!mounted || request != generation || !identical(controller, next)) return;
       if (next.value.hasError) {
-        unawaited(failed('Video failed; verify NVR, port and recording.'));
+        unawaited(failed('Video failed; verify the device, port and recording.'));
       } else if (!started && (next.value.isPlaying || next.value.position > Duration.zero)) {
         started = true;
         timeout?.cancel();
@@ -167,7 +167,7 @@ class _CameraTileState extends State<CameraTile> {
         SizedBox(height: 42, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6),child: Row(children: [
           Expanded(child: DropdownButton<String>(
             isExpanded: true, value: selected?.id,
-            hint: const Text('NVR', style: TextStyle(fontSize: 12)),
+            hint: const Text('Device', style: TextStyle(fontSize: 12)),
             items: widget.store.devices.map((n) => DropdownMenuItem(
               value: n.id, child: Text(n.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
             )).toList(),
