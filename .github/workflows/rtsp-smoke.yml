@@ -39,7 +39,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Start authenticated RTSP fixture
         run: |
-          curl -fsSL --retry 3 https://raw.githubusercontent.com/ultralytics/ultralytics/ef512bfc250a91fa75632efd1f3b7cc87a0cac3e/ultralytics/assets/bus.jpg -o /tmp/people.jpg
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/ultralytics/ultralytics/ef512bfc250a91fa75632efd1f3b7cc87a0cac3e/ultralytics/assets/zidane.jpg -o /tmp/people.jpg
           curl -fsSL --retry 3 https://raw.githubusercontent.com/ankandrew/fast-alpr/c5a94706f175590b2bc09aa86f46182d4c267fae/assets/test_image.png -o /tmp/plates.png
           ffmpeg -hide_banner -loglevel error -filter_complex_threads 1 \
             -loop 1 -framerate 10 -t 4 -i /tmp/people.jpg \

@@ -56,7 +56,8 @@ internal class PlaybackDetector(private val context: Context) : AutoCloseable {
     private fun peopleIn(frame: Bitmap, model: OrtSession): List<RectF> {
         // SSD MobileNet consumes NHWC RGB bytes and returns normalized YXYX boxes.
         val size = 300
-        val pixels = pixelsFor(frame, size, Rect(0, 0, size, size))
+        val layout = letterbox(frame, size)
+        val pixels = pixelsFor(frame, size, layout.destination)
         val rgb = ByteArray(pixels.size * 3)
         pixels.forEachIndexed { i, pixel ->
             rgb[3 * i] = (pixel shr 16).toByte()
@@ -67,16 +68,16 @@ internal class PlaybackDetector(private val context: Context) : AutoCloseable {
             environment, ByteBuffer.wrap(rgb), longArrayOf(1, 300, 300, 3), OnnxJavaType.UINT8,
         ).use { input ->
             model.run(mapOf("inputs" to input)).use { result ->
+                val outputs = result.associate { it.key to it.value.value }
                 @Suppress("UNCHECKED_CAST")
-                val boxes = (result[0].value as Array<Array<FloatArray>>)[0]
+                val boxes = (outputs.getValue("detection_boxes") as Array<Array<FloatArray>>)[0]
                 @Suppress("UNCHECKED_CAST")
-                val classes = (result[1].value as Array<FloatArray>)[0]
+                val classes = (outputs.getValue("detection_classes") as Array<FloatArray>)[0]
                 @Suppress("UNCHECKED_CAST")
-                val scores = (result[2].value as Array<FloatArray>)[0]
+                val scores = (outputs.getValue("detection_scores") as Array<FloatArray>)[0]
                 boxes.indices.filter { classes[it] == 1f && scores[it] >= 0.5f }.map { i ->
                     val (top, left, bottom, right) = boxes[i]
-                    RectF(left * frame.width, top * frame.height,
-                        right * frame.width, bottom * frame.height)
+                    layout.toSource(left * size, top * size, right * size, bottom * size)
                 }
             }
         }
@@ -85,12 +86,8 @@ internal class PlaybackDetector(private val context: Context) : AutoCloseable {
     private fun platesIn(frame: Bitmap, model: OrtSession): List<RectF> {
         // YOLOv9 consumes letterboxed NCHW RGB floats. NMS is part of the model.
         val size = 384
-        val scale = size.toFloat() / maxOf(frame.width, frame.height)
-        val width = (scale * frame.width).roundToInt().coerceIn(1, size)
-        val height = (scale * frame.height).roundToInt().coerceIn(1, size)
-        val left = (size - width) / 2
-        val top = (size - height) / 2
-        val pixels = pixelsFor(frame, size, Rect(left, top, left + width, top + height))
+        val layout = letterbox(frame, size)
+        val pixels = pixelsFor(frame, size, layout.destination)
         val rgb = FloatArray(pixels.size * 3)
         pixels.forEachIndexed { i, pixel ->
             rgb[i] = Color.red(pixel) / 255f
@@ -104,11 +101,26 @@ internal class PlaybackDetector(private val context: Context) : AutoCloseable {
                 @Suppress("UNCHECKED_CAST")
                 val rows = result[0].value as Array<FloatArray>
                 rows.filter { it[5] == 0f && it[6] >= 0.35f }.map { row ->
-                    RectF((row[1] - left) / scale, (row[2] - top) / scale,
-                        (row[3] - left) / scale, (row[4] - top) / scale)
+                    layout.toSource(row[1], row[2], row[3], row[4])
                 }
             }
         }
+    }
+
+    private data class Letterbox(val destination: Rect, val scale: Float) {
+        fun toSource(left: Float, top: Float, right: Float, bottom: Float) = RectF(
+            (left - destination.left) / scale, (top - destination.top) / scale,
+            (right - destination.left) / scale, (bottom - destination.top) / scale,
+        )
+    }
+
+    private fun letterbox(frame: Bitmap, size: Int): Letterbox {
+        val scale = size.toFloat() / maxOf(frame.width, frame.height)
+        val width = (scale * frame.width).roundToInt().coerceIn(1, size)
+        val height = (scale * frame.height).roundToInt().coerceIn(1, size)
+        val left = (size - width) / 2
+        val top = (size - height) / 2
+        return Letterbox(Rect(left, top, left + width, top + height), scale)
     }
 
     private fun pixelsFor(frame: Bitmap, size: Int, destination: Rect): IntArray {
