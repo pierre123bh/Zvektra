@@ -832,20 +832,20 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       ])),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
-          Expanded(child: OutlinedButton(
+          OutlinedButton(
             onPressed: _selectPlaybackDate,
             child: Text(DateFormat('dd MMM yyyy').format(_playbackDate)),
-          )),
+          ),
           const SizedBox(width: 4),
-          Expanded(child: OutlinedButton(
+          OutlinedButton(
             onPressed: () => _selectPlaybackTime(true),
             child: Text('From ${_playbackFrom.format(context)}'),
-          )),
+          ),
           const SizedBox(width: 4),
-          Expanded(child: OutlinedButton(
+          OutlinedButton(
             onPressed: () => _selectPlaybackTime(false),
             child: Text('To ${_playbackTo.format(context)}'),
-          )),
+          ),
         ]))),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Row(children: [
         FilledButton.icon(
