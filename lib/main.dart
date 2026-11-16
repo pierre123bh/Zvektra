@@ -611,7 +611,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     };
     _openStream(
       request, link, port, mode, source,
-      softwareDecoding: false, alternateLink: alternateLink,
+      // A resumed recording may have lost its hardware decoding surface.
+      softwareDecoding: restore, alternateLink: alternateLink,
     );
   }
 
@@ -702,7 +703,9 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
 
     setState(() {
       _replacePlayer(next);
-      if (softwareDecoding) output = 'Retrying video for $source…';
+      if (softwareDecoding && !output.startsWith('Connecting')) {
+        output = 'Retrying video for $source…';
+      }
       _videoStatus = output;
     });
     _streamTimeout = Timer(const Duration(seconds: 15), () {
