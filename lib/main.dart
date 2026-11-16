@@ -979,7 +979,23 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (text.contains('record') || text.contains('playback') || text.contains('play back')) {
       final now = DateTime.now();
       DateTime date = _playbackDate;
-      if (RegExp(r'\btoday\b').hasMatch(text)) {
+      final explicitDate = RegExp(
+        r'\b(january|february|march|april|may|june|july|august|september|october|november|december)'
+        r'\s+(\d{1,2}),?\s+(\d{4})\b',
+      ).firstMatch(text);
+      if (explicitDate != null) {
+        final month = explicitDate.group(1)!;
+        final day = explicitDate.group(2)!;
+        final year = explicitDate.group(3)!;
+        final capitalizedMonth = month[0].toUpperCase() + month.substring(1);
+        try {
+          date = DateFormat('MMMM d yyyy', 'en_US')
+              .parseStrict('$capitalizedMonth $day $year');
+        } on FormatException {
+          _commandFeedback('Invalid playback date.');
+          return;
+        }
+      } else if (RegExp(r'\btoday\b').hasMatch(text)) {
         date = DateTime(now.year, now.month, now.day);
       } else if (RegExp(r'\byesterday\b').hasMatch(text)) {
         date = DateTime(now.year, now.month, now.day - 1);

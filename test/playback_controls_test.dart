@@ -4,6 +4,9 @@ import 'package:zvektra/main.dart';
 import 'package:zvektra/zvektra_theme.dart';
 
 class TestDeviceStore extends DeviceStore {
+  @override
+  Future<String?> password(String id) async => null;
+
   TestDeviceStore() {
     devices = [
       const Nvr(id: 'shop', name: 'Shop', manufacturer: 'Dahua',
@@ -13,6 +16,22 @@ class TestDeviceStore extends DeviceStore {
 }
 
 void main() {
+  testWidgets('Typed playback uses the explicit date before yesterday',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: buildZvektraTheme(),
+      home: Scaffold(body: AssistantScreen(store: TestDeviceStore())),
+    ));
+    await tester.tap(find.byTooltip('Commands'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField),
+        'play back cam2 yesterday from 12 pm to 12:06 pm November 15 2024');
+    await tester.tap(find.byTooltip('Send command'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('15 Nov 2024'), findsOneWidget);
+  });
+
   testWidgets('Assistant shows single-camera playback date and time controls',
       (tester) async {
     tester.view.devicePixelRatio = 1;
