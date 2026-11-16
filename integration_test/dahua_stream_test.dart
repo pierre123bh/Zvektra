@@ -76,7 +76,7 @@ void main() {
     await tester.tap(find.text('8').last);
     await tester.pumpAndSettle();
     expect(find.byType(CameraTile), findsNWidgets(8));
-    await tester.tap(find.text('NVR').first);
+    await tester.tap(find.byType(DropdownButton<String>).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('RTSP fixture').last);
     final live = await waitForVideo(tester, '/cam/realmonitor');
@@ -95,6 +95,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'play back cam1 yesterday from 6:am to 6:06 am');
     await tester.tap(find.byTooltip('Send command'));
     final playback = await waitForVideo(tester, '/cam/playback');
+    debugPrint('Playback fixture is decoding');
     final query = Uri.parse(playback.dataSource).queryParameters;
     expect(query['starttime'], endsWith('_06_00_00'));
     expect(query['endtime'], endsWith('_06_06_00'));
@@ -130,8 +131,9 @@ void main() {
 
     await tester.tap(find.byTooltip('Stop detection'));
     await tester.pump();
-    expect(tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults)).running, isFalse);
-    final afterStop = matches.length;
+    final stopped = tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults));
+    expect(stopped.running, isFalse);
+    final afterStop = stopped.detections.length;
     await tester.pump(const Duration(seconds: 2));
     expect(tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults)).detections,
         hasLength(afterStop));

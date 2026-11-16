@@ -989,14 +989,16 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
             child: Text('To ${_playbackTo.format(context)}'),
           ),
         ]))),
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Row(children: [
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        alignment: WrapAlignment.spaceBetween,
+        children: [
         FilledButton.icon(
           onPressed: _playSelectedRange,
           icon: const Icon(Icons.play_arrow), label: const Text('Playback'),
         ),
         IconButton(onPressed: pausePlayback, icon: const Icon(Icons.pause), tooltip: 'Pause'),
         IconButton(onPressed: resumePlayback, icon: const Icon(Icons.play_arrow), tooltip: 'Resume'),
-        const Spacer(),
         IconButton(
           onPressed: _detecting ? () => setState(_stopDetection) : _startDetection,
           icon: Icon(_detecting ? Icons.stop_circle_outlined : Icons.center_focus_strong),
@@ -1006,6 +1008,20 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           icon: Icon(recording ? Icons.mic : Icons.mic_none), tooltip: 'Voice'),
         IconButton(onPressed: () => setState(() => _showCommands = !_showCommands),
           icon: const Icon(Icons.keyboard), tooltip: 'Commands'),
+        if (bounds.maxHeight < 345 && _detections.isNotEmpty)
+          IconButton(
+            onPressed: () => showModalBottomSheet<void>(
+              context: context,
+              builder: (_) => SafeArea(child: PlaybackDetectionResults(
+                detections: List.of(_detections),
+                peopleCount: _peopleCount,
+                plateCount: _plateCount,
+                running: false,
+              )),
+            ),
+            icon: const Icon(Icons.photo_library_outlined),
+            tooltip: 'Detection results',
+          ),
       ])),
       Expanded(child: Container(
         width: double.infinity,

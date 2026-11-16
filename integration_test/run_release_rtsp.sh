@@ -15,6 +15,10 @@ for attempt in {1..75}; do
     echo 'Release APK rendered both authenticated RTSP routes and detected both classes from recorded playback.'
     exit 0
   fi
+  if adb logcat -d -s flutter:I | grep -F 'Some tests failed.'; then
+    echo 'The Android playback detection test reported a failure.'
+    exit 1
+  fi
   if ! adb shell pidof net.zvektra.zvektra.whisper >/dev/null; then
     echo 'The Android app closed during the release playback test.'
     print_diagnostics
