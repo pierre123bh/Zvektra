@@ -29,3 +29,12 @@ speech recognizer.
 For GitHub Actions, create the repository Actions variable
 `ZVEKTRA_VOICE_RELAY` with the same HTTPS URL, then run the Android build on
 `voice/openai-transcription`. Put both secrets on the relay host only.
+
+## Cloudflare Workers deployment
+
+Create a Worker in the Cloudflare dashboard and replace the starter script
+with `worker.mjs`. In the Worker's settings, add two secret bindings named
+`OPENAI_API_KEY` and `ZVEKTRA_RELAY_TOKEN`. Deploy the Worker and use its
+`https://<worker>.<account>.workers.dev/transcribe` URL for the
+`ZVEKTRA_VOICE_RELAY` Actions variable. The app asks for the relay token
+when first using the microphone.
