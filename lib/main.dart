@@ -681,7 +681,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if(text.contains('count')||text.contains('detect')||text.contains('snapshot')){setState((){detectionRequested=true;output='Person detection requested. Native frame extraction and inference are not yet connected; no count or snapshots have been generated.';});return;}
     if(text.contains('pause')){await pausePlayback();return;}
     if(text.contains('resume')){await resumePlayback();return;}
-    if(RegExp(r'\bforward\b|\bback\b|\brewind\b').hasMatch(text)){final seconds=int.tryParse(RegExp(r'\d+').firstMatch(text)?.group(0)??'30')??30;if(from==null){setState(()=>output='Choose recorded playback first.');return;}await play(start:from!.add(Duration(seconds:RegExp(r'\bback\b|\brewind\b').hasMatch(text)?-seconds:seconds)));return;}
+    if(RegExp(r'^(?:skip\s+)?(?:forward|back|rewind)\b').hasMatch(text)){final seconds=int.tryParse(RegExp(r'\d+').firstMatch(text)?.group(0)??'30')??30;if(from==null){setState(()=>output='Choose recorded playback first.');return;}await play(start:from!.add(Duration(seconds:RegExp(r'\bback\b|\brewind\b').hasMatch(text)?-seconds:seconds)));return;}
     if (text.contains('record') || text.contains('playback') || text.contains('play back')) {
       final now = DateTime.now();
       DateTime date = _playbackDate;
