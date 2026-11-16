@@ -23,27 +23,15 @@ class PlaybackDetectionResults extends StatelessWidget {
   final int peopleCount;
   final int plateCount;
   final bool running;
+  final ValueChanged<Uint8List> onShare;
   const PlaybackDetectionResults({
     super.key,
     required this.detections,
     required this.peopleCount,
     required this.plateCount,
     required this.running,
+    required this.onShare,
   });
-
-  Future<void> _shareSnapshot(BuildContext context, Uint8List snapshot) async {
-    const share = MethodChannel('net.zvektra/snapshot_share');
-    try {
-      await share.invokeMethod<void>('whatsapp', snapshot);
-    } on PlatformException catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(error.code == 'WHATSAPP_UNAVAILABLE'
-            ? 'Install WhatsApp or WhatsApp Business to share this snapshot.'
-            : 'Could not share this snapshot.'),
-      ));
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +67,7 @@ class PlaybackDetectionResults extends StatelessWidget {
                 return Tooltip(
                   message: 'Share snapshot via WhatsApp',
                   child: InkWell(
-                    onTap: () => _shareSnapshot(context, detection.snapshot),
+                    onTap: () => onShare(detection.snapshot),
                     child: Padding(
                       padding: const EdgeInsets.all(4),
                       child: Column(children: [

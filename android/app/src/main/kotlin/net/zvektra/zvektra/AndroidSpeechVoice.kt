@@ -28,8 +28,17 @@ class AndroidSpeechVoice(
                     } else {
                         try {
                             cancel()
-                            recognizer = SpeechRecognizer.createSpeechRecognizer(activity)
-                            recognizer?.setRecognitionListener(this)
+                            val session = SpeechRecognizer.createSpeechRecognizer(activity)
+                            recognizer = session
+                            session.setRecognitionListener(object : RecognitionListener by this@AndroidSpeechVoice {
+                                override fun onResults(results: Bundle?) {
+                                    if (recognizer === session) this@AndroidSpeechVoice.onResults(results)
+                                }
+
+                                override fun onError(error: Int) {
+                                    if (recognizer === session) this@AndroidSpeechVoice.onError(error)
+                                }
+                            })
                             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -54,9 +63,14 @@ class AndroidSpeechVoice(
                     }
                 }
                 "stop" -> {
-                    if (listening) recognizer?.stopListening()
-                    listening = false
-                    result.success(null)
+                    try {
+                        if (listening) recognizer?.stopListening()
+                        listening = false
+                        result.success(null)
+                    } catch (_: Exception) {
+                        cancel()
+                        result.error("STOP_FAILED", "Could not finish speech recognition", null)
+                    }
                 }
                 "cancel" -> { cancel(); result.success(null) }
                 else -> result.notImplemented()
@@ -66,9 +80,12 @@ class AndroidSpeechVoice(
 
     fun cancel() {
         listening = false
-        recognizer?.cancel()
-        recognizer?.destroy()
+        val session = recognizer
         recognizer = null
+        if (session != null) {
+            runCatching { session.cancel() }
+            runCatching { session.destroy() }
+        }
     }
 
     fun close() {

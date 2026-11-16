@@ -149,6 +149,28 @@ void main() {
     expect(tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults)).detections,
         hasLength(afterStop));
     expect(playback.value.isPlaying, isTrue);
+    const sharing = MethodChannel('net.zvektra/snapshot_share');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    bool shared = false;
+    messenger.setMockMethodCallHandler(sharing, (call) async {
+      if (call.method == 'available') return true;
+      expect(call.method, 'whatsapp');
+      expect(call.arguments, isA<Uint8List>());
+      expect(find.byType(VlcPlayer), findsNothing);
+      shared = true;
+      return null;
+    });
+    await tester.tap(find.byTooltip('Share snapshot via WhatsApp').first);
+    await tester.pumpAndSettle();
+    expect(shared, isTrue);
+    expect(find.textContaining('Tap Resume'), findsOneWidget);
+    expect(find.byType(PlaybackDetectionResults), findsOneWidget);
+    messenger.setMockMethodCallHandler(sharing, null);
+    await tester.tap(find.byTooltip('Resume'));
+    final resumed = await waitForVideo(tester, '/cam/playback');
+    expect(Uri.parse(resumed.dataSource).queryParameters['channel'], '1');
+    expect(Uri.parse(resumed.dataSource).queryParameters['endtime'], query['endtime']);
+
     await tester.tap(find.byTooltip('Detect people and vehicles'));
     await tester.pump();
     expect(find.byTooltip('Stop detection'), findsOneWidget);

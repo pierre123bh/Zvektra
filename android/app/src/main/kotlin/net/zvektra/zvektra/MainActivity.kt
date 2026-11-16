@@ -10,6 +10,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 class MainActivity : FlutterActivity() {
+    private val whatsappPackages = listOf("com.whatsapp", "com.whatsapp.w4b")
     private var snapshotShare: MethodChannel? = null
     private var detection: PlaybackDetectionChannel? = null
     private var speechVoice: AndroidSpeechVoice? = null
@@ -20,6 +21,10 @@ class MainActivity : FlutterActivity() {
         snapshotShare?.setMethodCallHandler { call, result ->
             val jpeg = call.arguments as? ByteArray
             when {
+                call.method == "available" -> result.success(whatsappPackages.any { target ->
+                    Intent(Intent.ACTION_SEND).setType("image/jpeg").setPackage(target)
+                        .resolveActivity(packageManager) != null
+                })
                 call.method != "whatsapp" -> result.notImplemented()
                 jpeg == null || jpeg.isEmpty() -> result.error("INVALID_IMAGE", null, null)
                 else -> try {
@@ -59,7 +64,7 @@ class MainActivity : FlutterActivity() {
                 clipData = ClipData.newRawUri("Zvektra snapshot", uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            for (target in listOf("com.whatsapp", "com.whatsapp.w4b")) {
+            for (target in whatsappPackages) {
                 try {
                     startActivity(intent.setPackage(target))
                     sharedFileInUse = true

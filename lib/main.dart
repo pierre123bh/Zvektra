@@ -1,3 +1,4 @@
+import 'arabic_playback_command.dart';
 import 'multi_camera.dart';
 import 'playback_detection_results.dart';
 import 'dart:async';
@@ -337,6 +338,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   static const _speech = MethodChannel('net.zvektra/speech');
   Timer? _recordingLimit;
   bool _voiceBusy = false;
+  bool _awaitingSpeech = false;
   int _voiceRequest = 0;
 
   @override
@@ -344,35 +346,42 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _speech.setMethodCallHandler((call) async {
-      if (!mounted) return;
-      if (call.method == 'recognized') {
-        final transcript = (call.arguments as String? ?? '').trim();
-        if (transcript.isEmpty) return;
-        command.value = TextEditingValue(text: transcript,
-          selection: TextSelection.collapsed(offset: transcript.length));
-        _recordingLimit?.cancel();
-        setState(() {
-          recording = false;
-          _voiceBusy = false;
-          awaitingVoiceReview = true;
-          output = 'Review the transcription, then press Execute.';
-        });
-      } else if (call.method == 'speechError') {
-        _recordingLimit?.cancel();
-        setState(() { recording = false; _voiceBusy = false;
-          output = 'Speech recognition: ${call.arguments}'; });
-      }
+      if (!mounted || !(recording || _voiceBusy || _awaitingSpeech)) return;
+      if (call.method != 'recognized' && call.method != 'speechError') return;
+      final arg = call.arguments;
+      final transcript = call.method == 'recognized' && arg is String ? arg.trim() : '';
+      _cancelVoice();
+      setState(() {
+        recording = false;
+        _voiceBusy = false;
+        _awaitingSpeech = false;
+        awaitingVoiceReview = transcript.isNotEmpty;
+        if (transcript.isNotEmpty) {
+          _showCommands = true;
+          command.value = TextEditingValue(text: transcript,
+            selection: TextSelection.collapsed(offset: transcript.length));
+        }
+      });
+      if (transcript.isEmpty) _commandFeedback('No speech recognized. Please try again.');
     });
+  }
+
+  void _commandFeedback(String message) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
-    if (state != AppLifecycleState.paused || (!recording && !_voiceBusy)) return;
+    if (state != AppLifecycleState.paused || (!recording && !_voiceBusy && !_awaitingSpeech)) return;
     _cancelVoice();
     setState(() {
       recording = false;
       _voiceBusy = false;
+      _awaitingSpeech = false;
       output = 'Voice recording cancelled.';
     });
   }
@@ -380,7 +389,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   void _cancelVoice() {
     ++_voiceRequest;
     _recordingLimit?.cancel();
-    if (recording || _voiceBusy) unawaited(_cancelNativeVoice());
+    if (recording || _voiceBusy || _awaitingSpeech) unawaited(_cancelNativeVoice());
   }
 
   Future<void> _cancelNativeVoice() async {
@@ -413,9 +422,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   ConnectionTask<Socket>? _portCheck;
   int _playRequest = 0;
   bool _connecting = false;
+  bool _sharingSnapshot = false;
+  bool _resumeAfterShare = false;
   bool _hasVideo = false;
   String? _videoStatus;
-  ({String deviceId, int camera, DateTime? start})? _lastStream;
+  ({String deviceId, int camera, DateTime? start, DateTime? end})? _lastStream;
 
   @override
   void dispose() {
@@ -484,7 +495,9 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     });
   }
 
-  Future<void> play({DateTime? start, DateTime? end, Nvr? device, int? camera}) async {
+  Future<void> play({DateTime? start, DateTime? end, Nvr? device, int? camera,
+      bool keepDetections = false}) async {
+    if (_sharingSnapshot) return;
     final target = device ?? selected;
     if (target == null) {
       setState(() => output = 'Add an NVR in Devices first.');
@@ -506,13 +519,16 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (!_isCurrent(request)) return;
     setState(() {
       _replacePlayer(null);
-      _detections.clear();
-      _peopleCount = 0;
-      _plateCount = 0;
+      if (!keepDetections) {
+        _detections.clear();
+        _peopleCount = 0;
+        _plateCount = 0;
+      }
+      _resumeAfterShare = false;
       _detectionError = null;
       _connecting = true;
       _hasVideo = false;
-      _lastStream = (deviceId: target.id, camera: cameraNumber, start: start);
+      _lastStream = (deviceId: target.id, camera: cameraNumber, start: start, end: end);
       selectedId = target.id;
       channel = cameraNumber;
       from = start;
@@ -717,7 +733,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   }
 
   Future<void> resumePlayback() async {
-    if (_connecting) return;
+    if (_connecting || _sharingSnapshot) return;
     final active = player;
     if (_hasVideo && active != null) {
       try {
@@ -736,11 +752,58 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (last == null) return;
     for (final device in widget.store.devices) {
       if (device.id == last.deviceId) {
-        await play(start: last.start, device: device, camera: last.camera);
+        await play(start: last.start, end: _resumeAfterShare ? last.end : null,
+            device: device, camera: last.camera, keepDetections: _resumeAfterShare);
         return;
       }
     }
   }
+  Future<void> _sharePlaybackSnapshot(Uint8List snapshot) async {
+    if (_sharingSnapshot) return;
+    _sharingSnapshot = true;
+    const share = MethodChannel('net.zvektra/snapshot_share');
+    try {
+      final available = await share.invokeMethod<bool>('available');
+      if (!mounted) return;
+      if (available != true) {
+        _commandFeedback('Install WhatsApp or WhatsApp Business to share this snapshot.');
+        return;
+      }
+      final request = ++_playRequest;
+      _streamTimeout?.cancel();
+      _portCheck?.cancel();
+      setState(_stopDetection);
+      await _waitForSnapshot(_snapshotInFlight);
+      if (!_isCurrent(request)) return;
+      final active = player;
+      final last = _lastStream;
+      if (active != null && last != null) {
+        final elapsed = active.value.position;
+        final nextStart = last.start?.add(elapsed);
+        final canResumeAtPosition =
+            nextStart != null && (last.end == null || nextStart.isBefore(last.end!));
+        _lastStream = (
+          deviceId: last.deviceId, camera: last.camera,
+          start: canResumeAtPosition ? nextStart : last.start, end: last.end,
+        );
+        _resumeAfterShare = true;
+      }
+      setState(() {
+        _replacePlayer(null);
+        _hasVideo = false;
+        _connecting = false;
+        _videoStatus = 'Playback paused for sharing. Tap Resume to continue.';
+      });
+      await _playerTeardown;
+      if (!_isCurrent(request)) return;
+      await share.invokeMethod<void>('whatsapp', snapshot);
+    } on Exception {
+      _commandFeedback('Could not open WhatsApp to share this snapshot.');
+    } finally {
+      _sharingSnapshot = false;
+    }
+  }
+
   void _stopDetection() {
     ++_detectionSession;
     _detectionTimer?.cancel();
@@ -818,10 +881,18 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   }
 
   Future<void> execute(String raw) async {
-    final text=raw.trim().toLowerCase().replaceAll(RegExp(r':(?=\s*(?:am|pm)\b)'), '');if(text.isEmpty)return;
+    final input = raw.trim();
+    if (input.isEmpty) return;
+    final normalized = RegExp(r'[\u0600-\u06FF]').hasMatch(input)
+        ? arabicPlaybackCommand(input) : input;
+    if (normalized == null) {
+      _commandFeedback('الأمر مش واضح. جرّب: فرجيني كاميرا واحد مبارح من ١٢ للـ ١٢ وخمسة');
+      return;
+    }
+    final text = normalized.toLowerCase().replaceAll(RegExp(r':(?=\s*(?:am|pm)\b)'), '');
     for(final n in widget.store.devices){if(text.contains(n.name.toLowerCase()))selectedId=n.id;}
     final match=RegExp(r'(?:camera|channel|cam)\s*(\d+)').firstMatch(text);
-    if(match!=null){final c=int.parse(match.group(1)!);if(selected!=null&&c<=selected!.maxChannels&&c>0)channel=c;else{setState(()=>output='Camera $c is outside the configured channel range.');return;}}
+    if(match!=null){final c=int.tryParse(match.group(1)!);if(c!=null&&selected!=null&&c<=selected!.maxChannels&&c>0)channel=c;else{_commandFeedback('Camera number is outside the configured channel range.');return;}}
     if (RegExp(r'\bstop (counting|detection|detecting)\b').hasMatch(text)) {
       setState(_stopDetection);
       return;
@@ -845,7 +916,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         r'\bfrom\s+(\d{1,2})(?::(\d{1,2}))?\s*(am|pm|a\.m\.|p\.m\.)?\s+to\s+(\d{1,2})(?::(\d{1,2}))?\s*(am|pm|a\.m\.|p\.m\.)?',
       ).firstMatch(text);
       if (range == null) {
-        setState(() => output = 'Use: playback cam3 today from 6:00 am to 6:06 am');
+        _commandFeedback('Use: playback cam3 today from 6:00 am to 6:06 am');
         return;
       }
       TimeOfDay? parseClock(String? h, String? m, String? suffix) {
@@ -865,7 +936,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       final fromTime = parseClock(range.group(1), range.group(2), firstSuffix);
       final toTime = parseClock(range.group(4), range.group(5), range.group(6));
       if (fromTime == null || toTime == null) {
-        setState(() => output = 'Invalid playback time.');
+        _commandFeedback('Invalid playback time.');
         return;
       }
       final start = DateTime(date.year, date.month, date.day, fromTime.hour, fromTime.minute);
@@ -876,14 +947,14 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         _playbackTo = toTime;
       });
       if (!end.isAfter(start) || end.isAfter(now)) {
-        setState(() => output = 'Check playback range: end must be after start and not in the future.');
+        _commandFeedback('Choose an end time after the start and before now.');
         return;
       }
       await play(start: start, end: end);
       return;
     }
     if(text.contains('live')||text.contains('show')||text.contains('play')){await play();return;}
-    setState(()=>output='Try: "show camera 2", "playback camera 1", "pause", or "forward 30 seconds".');
+    _commandFeedback('Command not understood. Try “playback cam 1 yesterday from 12:00 to 12:05”.');
   }
   bool _showCommands = false;
   DateTime _playbackDate = DateTime.now().subtract(const Duration(days: 1));
@@ -925,7 +996,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   }
 
   Future<void> toggleMic() async {
-    if (_voiceBusy) return;
+    if (_voiceBusy || _awaitingSpeech) return;
     final request = ++_voiceRequest;
     final ending = recording;
     _recordingLimit?.cancel();
@@ -933,6 +1004,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _voiceBusy = true;
       if (ending) {
         recording = false;
+        _awaitingSpeech = true;
         output = 'Transcribing on this phone…';
       }
     });
@@ -940,9 +1012,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
 
     try {
       if (ending) {
+        _recordingLimit = Timer(const Duration(seconds: 8), () {
+          if (!current() || !_awaitingSpeech) return;
+          _cancelVoice();
+          setState(() { _awaitingSpeech = false; _voiceBusy = false; });
+          _commandFeedback('Speech recognition timed out. Please try again.');
+        });
         await _speech.invokeMethod<void>('stop');
-        if (!current()) return;
-        setState(() => output = 'Finishing recognition…');
       } else {
         final permission = await Permission.microphone.request();
         if (!current()) return;
@@ -960,14 +1036,17 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           if (mounted && recording) unawaited(toggleMic());
         });
       }
-    } on PlatformException {
+    } on Exception {
       if (current()) {
-        setState(() => output = ending
-            ? 'Speech recognition failed. Try again.'
-            : 'Could not start the microphone. Check its permission.');
+        _cancelVoice();
+        setState(() {
+          recording = false;
+          _awaitingSpeech = false;
+          _voiceBusy = false;
+        });
+        _commandFeedback(ending ? 'Speech recognition failed. Please try again.'
+            : 'Could not start voice recognition.');
       }
-    } on MissingPluginException {
-      if (current()) setState(() => output = 'Android speech recognition is unavailable.');
     } finally {
       if (current()) setState(() => _voiceBusy = false);
     }
@@ -1072,7 +1151,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           icon: Icon(_detecting ? Icons.stop_circle_outlined : Icons.center_focus_strong),
           tooltip: _detecting ? 'Stop detection' : 'Detect people and vehicles',
         ),
-        IconButton(onPressed: _voiceBusy ? null : toggleMic,
+        IconButton(onPressed: _voiceBusy || _awaitingSpeech ? null : toggleMic,
           icon: Icon(recording ? Icons.mic : Icons.mic_none), tooltip: 'Voice'),
         IconButton(onPressed: () => setState(() => _showCommands = !_showCommands),
           icon: const Icon(Icons.keyboard), tooltip: 'Commands'),
@@ -1085,6 +1164,10 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
                 peopleCount: _peopleCount,
                 plateCount: _plateCount,
                 running: false,
+                onShare: (snapshot) {
+                  Navigator.pop(context);
+                  unawaited(_sharePlaybackSnapshot(snapshot));
+                },
               )),
             ),
             icon: const Icon(Icons.photo_library_outlined),
@@ -1108,6 +1191,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           peopleCount: _peopleCount,
           plateCount: _plateCount,
           running: _detecting,
+          onShare: _sharePlaybackSnapshot,
         ),
       if (_showCommands) Padding(
         padding: const EdgeInsets.all(6),
@@ -1121,7 +1205,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
             FocusScope.of(context).unfocus();
             setState(() { awaitingVoiceReview = false; output = 'Processing command…'; });
             try { await execute(typed); }
-            catch (_) { if (mounted) setState(() => output = 'Command failed. Please try again.'); }
+            catch (_) { _commandFeedback('Command failed. Please try again.'); }
           }, icon: const Icon(Icons.send_rounded, color: cyan)),
         ]),
       ),
