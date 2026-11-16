@@ -721,7 +721,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   ) async {
     bool current() => mounted && session == _detectionSession && identical(active, player);
     bool playing() => _foreground && active.value.isInitialized &&
-        active.value.isPlaying && !active.value.isBuffering;
+        active.value.isPlaying;
     if (!current() || !playing() || _analyzing) return;
     _analyzing = true;
     try {

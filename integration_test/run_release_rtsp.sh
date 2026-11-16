@@ -2,7 +2,8 @@
 set -euo pipefail
 
 print_diagnostics() {
-  adb logcat -d -s AndroidRuntime:E libc:F DEBUG:F VLC:V PlaybackDetection:E flutter:I | tail -120
+  adb logcat -d -s flutter:I PlaybackDetection:E AndroidRuntime:E libc:F DEBUG:F | tail -150
+  adb logcat -d -s VLC:V | tail -40
 }
 trap print_diagnostics ERR
 
@@ -17,6 +18,7 @@ for attempt in {1..75}; do
   fi
   if adb logcat -d -s flutter:I | grep -F 'Some tests failed.'; then
     echo 'The Android playback detection test reported a failure.'
+    print_diagnostics
     exit 1
   fi
   if ! adb shell pidof net.zvektra.zvektra.whisper >/dev/null; then

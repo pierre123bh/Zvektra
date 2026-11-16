@@ -79,7 +79,9 @@ void main() {
     await tester.tap(find.byType(DropdownButton<String>).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('RTSP fixture').last);
-    final live = await waitForVideo(tester, '/cam/realmonitor');
+    await waitForVideo(tester, '/cam/realmonitor');
+    final live = tester.widget<VlcPlayer>(find.byType(VlcPlayer)).controller;
+    debugPrint('Live fixture is decoding');
     expect(find.byTooltip('Detect people and plates'), findsNothing);
 
     // Exercise real inference on a known negative, including empty model output.
@@ -102,6 +104,8 @@ void main() {
 
     await tester.enterText(find.byType(TextField), 'count people');
     await tester.tap(find.byTooltip('Send command'));
+    await tester.pump();
+    expect(find.byTooltip('Stop detection'), findsOneWidget);
     PlaybackDetectionResults? results;
     for (var attempt = 0; attempt < 75; attempt++) {
       await tester.pump(const Duration(milliseconds: 400));
@@ -110,6 +114,13 @@ void main() {
         results = widget;
         break;
       }
+    }
+    if (results == null) {
+      final latest = find.byType(PlaybackDetectionResults).evaluate().firstOrNull?.widget
+          as PlaybackDetectionResults?;
+      debugPrint('Playback state: playing=${playback.value.isPlaying}, '
+          'buffering=${playback.value.isBuffering}, position=${playback.value.position}. '
+          'Results: people=${latest?.peopleCount}, plates=${latest?.plateCount}.');
     }
     expect(results, isNotNull, reason: 'Both models must make positive detections on the playback stream');
     expect(find.textContaining('People: '), findsOneWidget);
