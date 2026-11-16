@@ -16,6 +16,8 @@ const host = String.fromEnvironment('ZVEKTRA_RTSP_HOST', defaultValue: 'zvektra.
 const manufacturers = ['Dahua', 'Hikvision', 'Uniview', 'MEye'];
 const navy = Color(0xFF0D1725);
 const cyan = Color(0xFF62E2E6);
+const surface = Color(0xFF142439);
+const accent = Color(0xFF8B9CFF);
 
 class Nvr {
   final String id, name, manufacturer, port, username;
@@ -111,7 +113,7 @@ class ZvektraApp extends StatefulWidget { const ZvektraApp({super.key}); @overri
 class _ZvektraAppState extends State<ZvektraApp> {
   final store=DeviceStore();
   @override void initState(){super.initState();store.load();}
-  @override Widget build(BuildContext context)=>MaterialApp(title:'Zvektra',debugShowCheckedModeBanner:false,theme:ThemeData(brightness:Brightness.dark,scaffoldBackgroundColor:navy,colorScheme:ColorScheme.fromSeed(seedColor:cyan,brightness:Brightness.dark),useMaterial3:true),home:Home(store:store));
+  @override Widget build(BuildContext context)=>MaterialApp(title:'Zvektra',debugShowCheckedModeBanner:false,theme:ThemeData(brightness:Brightness.dark,scaffoldBackgroundColor:navy,colorScheme:ColorScheme.fromSeed(seedColor:cyan,brightness:Brightness.dark),useMaterial3:true,cardTheme:CardThemeData(color:surface,elevation:0,shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(18))),inputDecorationTheme:InputDecorationTheme(filled:true,fillColor:surface,border:OutlineInputBorder(borderRadius:BorderRadius.circular(14),borderSide:BorderSide.none)),navigationBarTheme:NavigationBarThemeData(backgroundColor:surface,indicatorColor:cyan.withValues(alpha:0.18)),appBarTheme:const AppBarTheme(backgroundColor:navy,centerTitle:false,elevation:0)),home:Home(store:store));
 }
 
 class Home extends StatefulWidget {final DeviceStore store;const Home({super.key,required this.store});@override State<Home> createState()=>_HomeState();}
@@ -784,13 +786,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         ),
       );
     }
-    return Stack(
+    return LayoutBuilder(builder: (context, space) => Stack(
       fit: StackFit.expand,
       children: [
         VlcPlayer(
           key: ObjectKey(active),
           controller: active,
-          aspectRatio: 16 / 9,
+          aspectRatio: space.maxWidth / space.maxHeight.clamp(1.0, double.infinity),
           virtualDisplay: false,
         ),
         if (_connecting && status != null)
@@ -805,7 +807,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
             ),
           ),
       ],
-    );
+    ));
   }
 
   @override
@@ -861,7 +863,9 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           icon: const Icon(Icons.keyboard), tooltip: 'Commands'),
       ])),
       Expanded(child: Container(
-        width: double.infinity, color: Colors.black,
+        width: double.infinity,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(12),border: Border.all(color:cyan.withValues(alpha:0.2))),
         child: _videoPanel(),
       )),
       if (_showCommands) Padding(
