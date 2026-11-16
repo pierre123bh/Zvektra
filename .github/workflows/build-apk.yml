@@ -2,7 +2,7 @@ name: Build Zvektra Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, "voice/offline-whisper"]
+    branches: [main, "voice/offline-whisper", "voice/openai-transcription"]
   pull_request:
 permissions:
   contents: read
@@ -27,7 +27,11 @@ jobs:
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
       - name: Build ARM64 release-mode test APK
-        run: flutter build apk --release --target-platform android-arm64 --split-per-abi
+        env:
+          ZVEKTRA_VOICE_RELAY: ${{ github.ref_name == 'voice/openai-transcription' && vars.ZVEKTRA_VOICE_RELAY || '' }}
+        run: |
+          flutter build apk --release --target-platform android-arm64 --split-per-abi \
+            --dart-define="ZVEKTRA_VOICE_RELAY=$ZVEKTRA_VOICE_RELAY"
       - name: Verify size, architecture and signature
         run: |
           mkdir -p dist

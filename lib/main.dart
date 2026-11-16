@@ -1,3 +1,4 @@
+import 'cloud_voice.dart';
 import 'multi_camera.dart';
 import 'playback_detection_results.dart';
 import 'dart:async';
@@ -319,6 +320,10 @@ class AssistantScreen extends StatefulWidget {final DeviceStore store;const Assi
 class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingObserver {
   final command = TextEditingController();
   static const _speech = MethodChannel('net.zvektra/speech');
+  static const _relayStorage = FlutterSecureStorage();
+  static String get _relayTokenKey => 'voice_relay_token:${CloudVoice.uri}';
+  String? _relayToken;
+  String? _cloudVoiceError;
   Timer? _recordingLimit;
   bool _voiceBusy = false;
   int _voiceRequest = 0;
@@ -369,7 +374,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
 
   Future<void> _cancelNativeVoice() async {
     try {
-      await _speech.invokeMethod<void>('cancel');
+      final channel = CloudVoice.enabled ? CloudVoice.recorder : _speech;
+      await channel.invokeMethod<void>('cancel');
     } on PlatformException {
       // The activity may already be detached.
     } on MissingPluginException {
@@ -866,6 +872,32 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     await play(start: start, end: end);
   }
 
+  Future<String?> _readRelayToken() async {
+    final saved = await _relayStorage.read(key: _relayTokenKey);
+    if (saved != null || !mounted) return saved;
+    var entered = '';
+    final token = await showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Voice relay access'),
+        content: TextField(
+          obscureText: true,
+          autocorrect: false,
+          decoration: const InputDecoration(labelText: 'Relay access token'),
+          onChanged: (value) => entered = value.trim(),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('Cancel')),
+          FilledButton(onPressed: () {
+            if (entered.length >= 32) Navigator.pop(dialog, entered);
+          }, child: const Text('Save')),
+        ],
+      ),
+    );
+    if (token != null) await _relayStorage.write(key: _relayTokenKey, value: token);
+    return token;
+  }
+
   Future<void> toggleMic() async {
     if (_voiceBusy) return;
     final request = ++_voiceRequest;
@@ -873,18 +905,31 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _recordingLimit?.cancel();
     setState(() {
       _voiceBusy = true;
+      _cloudVoiceError = null;
       if (ending) {
         recording = false;
-        output = 'Transcribing on this phone…';
+        output = CloudVoice.enabled ? 'Transcribing voice clip…' : 'Transcribing on this phone…';
       }
     });
     bool current() => mounted && request == _voiceRequest;
 
     try {
       if (ending) {
-        await _speech.invokeMethod<void>('stop');
-        if (!current()) return;
-        setState(() => output = 'Finishing recognition…');
+        if (CloudVoice.enabled) {
+          final clip = await CloudVoice.recorder.invokeMethod<Uint8List>('stop');
+          if (!current() || clip == null) return;
+          final transcript = await CloudVoice.transcribe(clip, _relayToken!);
+          if (!current()) return;
+          command.text = transcript;
+          setState(() {
+            _showCommands = true;
+            awaitingVoiceReview = true;
+          });
+        } else {
+          await _speech.invokeMethod<void>('stop');
+          if (!current()) return;
+          setState(() => output = 'Finishing recognition…');
+        }
       } else {
         final permission = await Permission.microphone.request();
         if (!current()) return;
@@ -892,7 +937,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           setState(() => output = 'Allow microphone access to record a command.');
           return;
         }
-        await _speech.invokeMethod<void>('start');
+        if (CloudVoice.enabled) {
+          _relayToken = await _readRelayToken();
+          if (!current() || _relayToken == null) return;
+          await CloudVoice.recorder.invokeMethod<void>('start');
+        } else {
+          await _speech.invokeMethod<void>('start');
+        }
         if (!current()) return;
         setState(() {
           recording = true;
@@ -902,14 +953,23 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           if (mounted && recording) unawaited(toggleMic());
         });
       }
-    } on PlatformException {
+    } on PlatformException catch (error) {
       if (current()) {
-        setState(() => output = ending
-            ? 'Speech recognition failed. Try again.'
-            : 'Could not start the microphone. Check its permission.');
+        if (error.code == 'RELAY_TOKEN') {
+          await _relayStorage.delete(key: _relayTokenKey);
+          if (!current()) return;
+        }
+        setState(() {
+          if (CloudVoice.enabled) _cloudVoiceError = 'Voice request failed. Try again.';
+          output = ending
+              ? 'Speech recognition failed. Try again.'
+              : 'Could not start the microphone. Check its permission.';
+        });
       }
     } on MissingPluginException {
       if (current()) setState(() => output = 'Android speech recognition is unavailable.');
+    } on Exception {
+      if (current()) setState(() => _cloudVoiceError = 'Could not transcribe the clip. Try again.');
     } finally {
       if (current()) setState(() => _voiceBusy = false);
     }
@@ -1029,7 +1089,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(12),border: Border.all(color:cyan.withValues(alpha:0.2))),
         child: _videoPanel(),
       )),
-      if (_detectionError case final message?)
+      if (_cloudVoiceError ?? _detectionError case final message?)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Text(message, style: Theme.of(context).textTheme.bodySmall),
