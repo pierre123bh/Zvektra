@@ -686,7 +686,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     setState(()=>output='Try: "show camera 2", "playback camera 1", "pause", or "forward 30 seconds".');
   }
   bool _showCommands = false;
-  DateTime _playbackDate = DateTime.now();
+  DateTime _playbackDate = DateTime.now().subtract(const Duration(days: 1));
   TimeOfDay _playbackFrom = const TimeOfDay(hour: 12, minute: 0);
   TimeOfDay _playbackTo = const TimeOfDay(hour: 13, minute: 0);
 
@@ -822,7 +822,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           onChanged: (x) => setState(() => selectedId = x),
         )),
         const SizedBox(width: 8),
-        SizedBox(width: 116, child: DropdownButtonFormField<int>(
+        SizedBox(width: 138, child: DropdownButtonFormField<int>(
           value: n == null ? 1 : channel <= n.maxChannels ? channel : 1,
           decoration: const InputDecoration(labelText: 'Camera', isDense: true, border: OutlineInputBorder()),
           items: List.generate(n?.maxChannels ?? 1,
@@ -831,7 +831,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         )),
       ])),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        child: Row(children: [
+        child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
           Expanded(child: OutlinedButton(
             onPressed: _selectPlaybackDate,
             child: Text(DateFormat('dd MMM yyyy').format(_playbackDate)),
@@ -846,7 +846,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
             onPressed: () => _selectPlaybackTime(false),
             child: Text('To ${_playbackTo.format(context)}'),
           )),
-        ])),
+        ]))),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Row(children: [
         FilledButton.icon(
           onPressed: _playSelectedRange,
