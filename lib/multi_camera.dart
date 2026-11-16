@@ -32,12 +32,12 @@ class _MultiCameraScreenState extends State<MultiCameraScreen> {
         final columns = count == 1 ? 1 : count == 2 ? 2 : count <= 4 ? 2 : 2;
         final rows = (count / columns).ceil();
         return GridView.builder(
-          padding: const EdgeInsets.all(6),
+          padding: const EdgeInsets.all(4),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
             childAspectRatio: (constraints.maxWidth / columns) /
                 (constraints.maxHeight / rows),
-            crossAxisSpacing: 6, mainAxisSpacing: 6,
+            crossAxisSpacing: 4, mainAxisSpacing: 4,
           ),
           itemCount: count,
           itemBuilder: (context, i) => CameraTile(
@@ -132,9 +132,10 @@ class _CameraTileState extends State<CameraTile> {
       if (n.id == deviceId) { selected = n; break; }
     }
     return Container(
-      decoration: BoxDecoration(color: Colors.black, border: Border.all(color: Colors.white24)),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(color: const Color(0xFF0B1524), borderRadius: BorderRadius.circular(12), border: Border.all(color: cyan.withValues(alpha: 0.3))),
       child: Column(children: [
-        SizedBox(height: 44, child: Row(children: [
+        SizedBox(height: 42, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6),child: Row(children: [
           Expanded(child: DropdownButton<String>(
             isExpanded: true, value: selected?.id,
             hint: const Text('NVR', style: TextStyle(fontSize: 12)),
@@ -152,10 +153,14 @@ class _CameraTileState extends State<CameraTile> {
             },
           )),
           IconButton(icon: const Icon(Icons.refresh, size: 18), tooltip: 'Reconnect', onPressed: selected == null ? null : () => unawaited(connect())),
-        ])),
+        ]))),
         Expanded(child: Stack(fit: StackFit.expand, children: [
           if (controller != null)
-            VlcPlayer(controller: controller!, aspectRatio: 16 / 9, virtualDisplay: false),
+            LayoutBuilder(builder: (context, available) => VlcPlayer(
+              controller: controller!,
+              aspectRatio: available.maxWidth / available.maxHeight.clamp(1.0, double.infinity),
+              virtualDisplay: false,
+            )),
           if (status.isNotEmpty)
             Center(child: Padding(padding: const EdgeInsets.all(8),
               child: Text(status, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)))),
