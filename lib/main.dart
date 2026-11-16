@@ -376,7 +376,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   bool awaitingVoiceReview=false;
   bool detectionRequested=false;
   final List<String> detectionEvents=[];
-  String? selectedId;int channel=1;bool recording=false;DateTime? from;
+  String? selectedId;int channel=1;bool recording=false;DateTime? from;DateTime? to;
   VlcPlayerController? player;
   Timer? _streamTimeout;
   ConnectionTask<Socket>? _portCheck;
@@ -438,7 +438,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     });
   }
 
-  Future<void> play({DateTime? start, Nvr? device, int? camera}) async {
+  Future<void> play({DateTime? start, DateTime? end, Nvr? device, int? camera}) async {
     final target = device ?? selected;
     if (target == null) {
       setState(() => output = 'Add an NVR in Devices first.');
@@ -459,6 +459,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       selectedId = target.id;
       channel = cameraNumber;
       from = start;
+      to = end;
       output = 'Connecting to $source…';
       _videoStatus = output;
     });
@@ -481,7 +482,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       return;
     }
     final link = StreamBuilderService.url(
-      target, cameraNumber, start: start, password: password,
+      target, cameraNumber, start: start, end: end, password: password,
     );
     final mode = start == null ? 'Live video' : 'Recorded playback';
     if (link == null) {
@@ -684,6 +685,45 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if(text.contains('live')||text.contains('show')||text.contains('play')){await play();return;}
     setState(()=>output='Try: "show camera 2", "playback camera 1", "pause", or "forward 30 seconds".');
   }
+  bool _showCommands = false;
+  DateTime _playbackDate = DateTime.now();
+  TimeOfDay _playbackFrom = const TimeOfDay(hour: 12, minute: 0);
+  TimeOfDay _playbackTo = const TimeOfDay(hour: 13, minute: 0);
+
+  DateTime _atTime(TimeOfDay time) => DateTime(
+    _playbackDate.year, _playbackDate.month, _playbackDate.day,
+    time.hour, time.minute,
+  );
+
+  Future<void> _selectPlaybackDate() async {
+    final date = await showDatePicker(
+      context: context, initialDate: _playbackDate,
+      firstDate: DateTime(2020), lastDate: DateTime.now(),
+    );
+    if (date != null && mounted) setState(() => _playbackDate = date);
+  }
+
+  Future<void> _selectPlaybackTime(bool isFrom) async {
+    final time = await showTimePicker(
+      context: context, initialTime: isFrom ? _playbackFrom : _playbackTo,
+    );
+    if (time != null && mounted) {
+      setState(() {
+        if (isFrom) { _playbackFrom = time; } else { _playbackTo = time; }
+      });
+    }
+  }
+
+  Future<void> _playSelectedRange() async {
+    final start = _atTime(_playbackFrom);
+    final end = _atTime(_playbackTo);
+    if (!end.isAfter(start) || end.isAfter(DateTime.now())) {
+      setState(() => output = 'Select a valid time range on the chosen date.');
+      return;
+    }
+    await play(start: start, end: end);
+  }
+
   Future<void> toggleMic() async {
     if (_voiceBusy) return;
     final request = ++_voiceRequest;
@@ -768,5 +808,72 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     );
   }
 
-  @override Widget build(BuildContext context){final n=selected;return ListView(padding:const EdgeInsets.all(16),children:[const Center(child:Icon(Icons.blur_circular,size:82,color:cyan)),const SizedBox(height:6),Center(child:Text('ZVEKTRA ASSISTANT',style:Theme.of(context).textTheme.titleLarge)),const Center(child:Text('Local-first remote video intelligence',style:TextStyle(color:Colors.white60))),const SizedBox(height:18),if(widget.store.devices.isNotEmpty)DropdownButtonFormField<String>(value:n?.id,decoration:const InputDecoration(labelText:'Active NVR',border:OutlineInputBorder()),items:widget.store.devices.map((x)=>DropdownMenuItem(value:x.id,child:Text(x.name))).toList(),onChanged:(x)=>setState(()=>selectedId=x)),if(n!=null)...[const SizedBox(height:12),DropdownButtonFormField<int>(value:channel<=n.maxChannels?channel:1,decoration:const InputDecoration(labelText:'Camera',border:OutlineInputBorder()),items:List.generate(n.maxChannels,(i)=>DropdownMenuItem(value:i+1,child:Text('Camera ${i+1}'))),onChanged:(v)=>setState(()=>channel=v??1))],const SizedBox(height:14),Container(height:230,color:Colors.black,child:_videoPanel()),const SizedBox(height:12),Wrap(alignment:WrapAlignment.center,spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>play(),icon:const Icon(Icons.live_tv),label:const Text('Live')),OutlinedButton.icon(onPressed:()=>play(start:DateTime.now().subtract(const Duration(minutes:10))),icon:const Icon(Icons.history),label:const Text('Playback')),OutlinedButton.icon(onPressed:pausePlayback,icon:const Icon(Icons.pause),label:const Text('Pause')),OutlinedButton.icon(onPressed:resumePlayback,icon:const Icon(Icons.play_arrow),label:const Text('Resume'))]),const SizedBox(height:10),OutlinedButton.icon(onPressed:() async {final now=DateTime.now();final date=await showDatePicker(context:context,initialDate:now,firstDate:DateTime(2020),lastDate:now);if(date==null||!context.mounted)return;final time=await showTimePicker(context:context,initialTime:TimeOfDay.now());if(time==null||!context.mounted)return;await play(start:DateTime(date.year,date.month,date.day,time.hour,time.minute));},icon:const Icon(Icons.calendar_month),label:const Text('Select recording date & time')),if(from!=null)Row(mainAxisAlignment:MainAxisAlignment.spaceEvenly,children:[TextButton(onPressed:()=>play(start:from!.subtract(const Duration(seconds:30))),child:const Text('−30 sec')),Text(DateFormat('MM/dd HH:mm:ss').format(from!)),TextButton(onPressed:()=>play(start:from!.add(const Duration(seconds:30))),child:const Text('+30 sec'))]),const SizedBox(height:12),Card(child:Padding(padding:const EdgeInsets.all(14),child:Text(output))),const SizedBox(height:12),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[if(awaitingVoiceReview)const Padding(padding:EdgeInsets.only(bottom:8),child:Text('Voice transcription — edit before executing',style:TextStyle(color:cyan))),Row(children:[Expanded(child:TextField(controller:command,minLines:1,maxLines:3,onChanged:(_){if(awaitingVoiceReview)setState((){});},onSubmitted:(v){setState(()=>awaitingVoiceReview=false);execute(v);},decoration:const InputDecoration(hintText:'Speak or type a command...',border:OutlineInputBorder()))),IconButton(onPressed:_voiceBusy?null:toggleMic,tooltip:recording?'Stop listening':'Speak command',icon:Icon(recording?Icons.mic:Icons.mic_none,color:cyan)),IconButton(onPressed:(){setState(()=>awaitingVoiceReview=false);execute(command.text);},tooltip:'Execute edited command',icon:const Icon(Icons.send,color:cyan))]),if(awaitingVoiceReview)TextButton.icon(onPressed:(){command.clear();setState(()=>awaitingVoiceReview=false);},icon:const Icon(Icons.close),label:const Text('Discard transcription'))]),const SizedBox(height:10),Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('People detection',style:TextStyle(fontWeight:FontWeight.bold)),Text(detectionRequested?'Requested — waiting for native AI integration':'Inactive'),const SizedBox(height:4),Text('Detected appearances: ${detectionEvents.length} (no AI frames processed)',style:const TextStyle(color:Colors.white70)),const Text('Snapshots: not yet available',style:TextStyle(color:Colors.white70))]))),const SizedBox(height:10),const Text('Android speech recognition supports device-dependent automatic language detection. You can edit the text before executing. Lebanese Arabic requires testing. People detection and snapshots are not yet available.',style:TextStyle(color:Colors.white54,fontSize:12))]);}
+  @override
+  Widget build(BuildContext context) {
+    final n = selected;
+    return LayoutBuilder(builder: (context, bounds) => Column(children: [
+      Padding(padding: const EdgeInsets.fromLTRB(8, 4, 8, 2), child: Row(children: [
+        Expanded(child: DropdownButtonFormField<String>(
+          value: n?.id, isExpanded: true,
+          decoration: const InputDecoration(labelText: 'NVR', isDense: true, border: OutlineInputBorder()),
+          items: widget.store.devices.map((x) => DropdownMenuItem(
+            value: x.id, child: Text(x.name, overflow: TextOverflow.ellipsis),
+          )).toList(),
+          onChanged: (x) => setState(() => selectedId = x),
+        )),
+        const SizedBox(width: 8),
+        SizedBox(width: 116, child: DropdownButtonFormField<int>(
+          value: n == null ? 1 : channel <= n.maxChannels ? channel : 1,
+          decoration: const InputDecoration(labelText: 'Camera', isDense: true, border: OutlineInputBorder()),
+          items: List.generate(n?.maxChannels ?? 1,
+            (i) => DropdownMenuItem(value: i + 1, child: Text('Cam ${i + 1}'))),
+          onChanged: n == null ? null : (v) => setState(() => channel = v ?? 1),
+        )),
+      ])),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        child: Row(children: [
+          Expanded(child: OutlinedButton(
+            onPressed: _selectPlaybackDate,
+            child: Text(DateFormat('dd MMM yyyy').format(_playbackDate)),
+          )),
+          const SizedBox(width: 4),
+          Expanded(child: OutlinedButton(
+            onPressed: () => _selectPlaybackTime(true),
+            child: Text('From ${_playbackFrom.format(context)}'),
+          )),
+          const SizedBox(width: 4),
+          Expanded(child: OutlinedButton(
+            onPressed: () => _selectPlaybackTime(false),
+            child: Text('To ${_playbackTo.format(context)}'),
+          )),
+        ])),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Row(children: [
+        FilledButton.icon(
+          onPressed: _playSelectedRange,
+          icon: const Icon(Icons.play_arrow), label: const Text('Playback'),
+        ),
+        IconButton(onPressed: pausePlayback, icon: const Icon(Icons.pause), tooltip: 'Pause'),
+        IconButton(onPressed: resumePlayback, icon: const Icon(Icons.play_arrow), tooltip: 'Resume'),
+        const Spacer(),
+        IconButton(onPressed: _voiceBusy ? null : toggleMic,
+          icon: Icon(recording ? Icons.mic : Icons.mic_none), tooltip: 'Voice'),
+        IconButton(onPressed: () => setState(() => _showCommands = !_showCommands),
+          icon: const Icon(Icons.keyboard), tooltip: 'Commands'),
+      ])),
+      Expanded(child: Container(
+        width: double.infinity, color: Colors.black,
+        child: _videoPanel(),
+      )),
+      if (_showCommands) Padding(
+        padding: const EdgeInsets.all(6),
+        child: Row(children: [
+          Expanded(child: TextField(controller: command, minLines: 1, maxLines: 2,
+            decoration: const InputDecoration(hintText: 'Command', isDense: true,
+              border: OutlineInputBorder()))),
+          IconButton(onPressed: () { setState(() => awaitingVoiceReview = false); execute(command.text); },
+            icon: const Icon(Icons.send)),
+        ]),
+      ),
+    ]));
+  }
 }
