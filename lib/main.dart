@@ -682,8 +682,55 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if(text.contains('pause')){await pausePlayback();return;}
     if(text.contains('resume')){await resumePlayback();return;}
     if(text.contains('forward')||text.contains('back')){final seconds=int.tryParse(RegExp(r'\d+').firstMatch(text)?.group(0)??'30')??30;if(from==null){setState(()=>output='Choose recorded playback first.');return;}await play(start:from!.add(Duration(seconds:text.contains('back')?-seconds:seconds)));return;}
-    if(text.contains('yesterday')){final now=DateTime.now();final yesterday=DateTime(now.year,now.month,now.day-1,now.hour,now.minute);await play(start:yesterday);return;}
-    if(text.contains('record')||text.contains('playback')){await play(start:DateTime.now().subtract(const Duration(minutes:10)));return;}
+    if (text.contains('record') || text.contains('playback') || text.contains('play back')) {
+      final now = DateTime.now();
+      DateTime date = _playbackDate;
+      if (RegExp(r'\\btoday\\b').hasMatch(text)) {
+        date = DateTime(now.year, now.month, now.day);
+      } else if (RegExp(r'\\byesterday\\b').hasMatch(text)) {
+        date = DateTime(now.year, now.month, now.day - 1);
+      }
+      final range = RegExp(
+        r'\\bfrom\\s+(\\d{1,2})(?::(\\d{1,2}))?\\s*(am|pm|a\\.m\\.|p\\.m\\.)?\\s+to\\s+(\\d{1,2})(?::(\\d{1,2}))?\\s*(am|pm|a\\.m\\.|p\\.m\\.)?',
+      ).firstMatch(text);
+      if (range == null) {
+        setState(() => output = 'Use: playback cam3 today from 6:00 am to 6:06 am');
+        return;
+      }
+      TimeOfDay? parseClock(String? h, String? m, String? suffix) {
+        var hour = int.tryParse(h ?? '');
+        final minute = int.tryParse(m ?? '0');
+        if (hour == null || minute == null || minute > 59) return null;
+        final meridiem = suffix?.replaceAll('.', '');
+        if (meridiem != null) {
+          if (hour < 1 || hour > 12) return null;
+          hour = (hour % 12) + (meridiem == 'pm' ? 12 : 0);
+        } else if (hour > 23) {
+          return null;
+        }
+        return TimeOfDay(hour: hour, minute: minute);
+      }
+      final firstSuffix = range.group(3) ?? range.group(6);
+      final fromTime = parseClock(range.group(1), range.group(2), firstSuffix);
+      final toTime = parseClock(range.group(4), range.group(5), range.group(6));
+      if (fromTime == null || toTime == null) {
+        setState(() => output = 'Invalid playback time.');
+        return;
+      }
+      final start = DateTime(date.year, date.month, date.day, fromTime.hour, fromTime.minute);
+      final end = DateTime(date.year, date.month, date.day, toTime.hour, toTime.minute);
+      setState(() {
+        _playbackDate = date;
+        _playbackFrom = fromTime;
+        _playbackTo = toTime;
+      });
+      if (!end.isAfter(start) || end.isAfter(now)) {
+        setState(() => output = 'Check playback range: end must be after start and not in the future.');
+        return;
+      }
+      await play(start: start, end: end);
+      return;
+    }
     if(text.contains('live')||text.contains('show')||text.contains('play')){await play();return;}
     setState(()=>output='Try: "show camera 2", "playback camera 1", "pause", or "forward 30 seconds".');
   }
