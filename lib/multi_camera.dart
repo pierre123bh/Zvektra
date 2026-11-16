@@ -100,18 +100,39 @@ class _CameraTileState extends State<CameraTile> {
       setState(() => status = 'Live stream unsupported for ${nvr!.manufacturer}');
       return;
     }
+    final fallback = nvr?.manufacturer == 'Topcam'
+        ? StreamBuilderService.url(nvr!, camera, password: password, topcamFallback: true)
+        : null;
+    _openLive(request, url, fallback: fallback);
+  }
+
+  void _openLive(int request, String link, {String? fallback}) {
     final next = VlcPlayerController.network(
-      url, hwAcc: HwAcc.auto, autoPlay: true,
+      link, hwAcc: HwAcc.auto, autoPlay: true,
       options: VlcPlayerOptions(
         rtp: VlcRtpOptions([VlcRtpOptions.rtpOverRtsp(true)]),
         advanced: VlcAdvancedOptions([VlcAdvancedOptions.networkCaching(1000)]),
       ),
     );
+    bool failing = false;
+    Future<void> failed(String message) async {
+      if (failing) return;
+      failing = true;
+      timeout?.cancel();
+      if (fallback == null || started) {
+        setState(() => status = message);
+        return;
+      }
+      setState(() { controller = null; status = 'Retrying Topcam live video…'; });
+      await WidgetsBinding.instance.endOfFrame;
+      try { await next.dispose(); } catch (_) {}
+      if (mounted && request == generation) _openLive(request, fallback);
+    }
+
     next.addListener(() {
       if (!mounted || request != generation || !identical(controller, next)) return;
       if (next.value.hasError) {
-        timeout?.cancel();
-        setState(() => status = 'Video failed; verify NVR, port and recording.');
+        unawaited(failed('Video failed; verify NVR, port and recording.'));
       } else if (!started && (next.value.isPlaying || next.value.position > Duration.zero)) {
         started = true;
         timeout?.cancel();
@@ -121,7 +142,7 @@ class _CameraTileState extends State<CameraTile> {
     setState(() { controller = next; status = 'Loading video…'; });
     timeout = Timer(const Duration(seconds: 20), () {
       if (mounted && request == generation && !started) {
-        setState(() => status = 'No video received. Check camera and connection.');
+        unawaited(failed('No video received. Check camera and connection.'));
       }
     });
   }

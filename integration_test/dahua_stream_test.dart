@@ -82,7 +82,7 @@ void main() {
     await waitForVideo(tester, '/cam/realmonitor');
     final live = tester.widget<VlcPlayer>(find.byType(VlcPlayer)).controller;
     debugPrint('Live fixture is decoding');
-    expect(find.byTooltip('Detect people and plates'), findsNothing);
+    expect(find.byTooltip('Detect people and vehicles'), findsNothing);
 
     // Exercise real inference on a known negative, including empty model output.
     final negativeFrame = await live.takeSnapshot();
@@ -103,7 +103,7 @@ void main() {
     expect(query['starttime'], endsWith('_12_00_00'));
     expect(query['endtime'], endsWith('_13_00_00'));
 
-    await tester.tap(find.byTooltip('Detect people and plates'));
+    await tester.tap(find.byTooltip('Detect people and vehicles'));
     await tester.pump();
     expect(find.byTooltip('Stop detection'), findsOneWidget);
     PlaybackDetectionResults? results;
@@ -124,7 +124,7 @@ void main() {
     }
     expect(results, isNotNull, reason: 'Both models must make positive detections on the playback stream');
     expect(find.textContaining('People: '), findsOneWidget);
-    expect(find.textContaining('Plates: '), findsOneWidget);
+    expect(find.textContaining('Vehicles: '), findsOneWidget);
     final matches = List<PlaybackDetection>.of(results!.detections);
     for (final kind in PlaybackDetectionKind.values) {
       final match = matches.firstWhere((detection) => detection.kind == kind);
@@ -149,6 +149,18 @@ void main() {
     expect(tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults)).detections,
         hasLength(afterStop));
     expect(playback.value.isPlaying, isTrue);
+    await tester.tap(find.byTooltip('Detect people and vehicles'));
+    await tester.pump();
+    expect(find.byTooltip('Stop detection'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButtonFormField<int>));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Cam 2').last);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Stop detection'), findsNothing);
+    await tester.tap(find.text('Playback'));
+    final second = await waitForVideo(tester, '/cam/playback');
+    expect(Uri.parse(second.dataSource).queryParameters['channel'], '2');
+    expect(second, isNot(same(playback)));
     debugPrint('ZVEKTRA_PLAYBACK_DETECTION_OK');
   });
 }

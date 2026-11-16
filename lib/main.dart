@@ -14,7 +14,7 @@ import 'package:permission_handler/permission_handler.dart';
 void main() { WidgetsFlutterBinding.ensureInitialized(); runApp(const ZvektraApp()); }
 
 const host = String.fromEnvironment('ZVEKTRA_RTSP_HOST', defaultValue: 'zvektra.net');
-const manufacturers = ['Dahua', 'Hikvision', 'Uniview', 'MEye'];
+const manufacturers = ['Dahua', 'Hikvision', 'Uniview', 'MEye', 'Topcam'];
 const navy = Color(0xFF0D1725);
 const cyan = Color(0xFF62E2E6);
 const surface = Color(0xFF142439);
@@ -91,7 +91,7 @@ class DeviceStore extends ChangeNotifier {
 // Only Dahua's recording RTSP path has been verified with the user's NVR.
 // Other vendor URLs are candidates requiring hardware-specific verification.
 class StreamBuilderService {
-  static String? url(Nvr n,int channel,{DateTime? start,DateTime? end,bool mainStream=false,required String password}) {
+  static String? url(Nvr n,int channel,{DateTime? start,DateTime? end,bool mainStream=false,bool topcamFallback=false,required String password}) {
     final user=Uri.encodeComponent(n.username);
     final pass=Uri.encodeComponent(password);
     final base='rtsp://$user:$pass@$host:${n.port}';
@@ -99,6 +99,22 @@ class StreamBuilderService {
       if(start==null) return '$base/cam/realmonitor?channel=$channel&subtype=${mainStream ? 0 : 1}';
       final f=DateFormat('yyyy_MM_dd_HH_mm_ss');
       return '$base/cam/playback?channel=$channel&starttime=${f.format(start)}&endtime=${f.format(end??start.add(const Duration(minutes:10)))}';
+    }
+    if (n.manufacturer == 'Topcam') {
+      if (start == null) {
+        return topcamFallback
+            ? '$base/Streaming/Channels/${channel}01'
+            : 'rtsp://$host:${n.port}/user=${user}_password=${pass}_channel=${channel}_stream=0.sdp';
+      }
+      final finish = end ?? start.add(const Duration(minutes: 10));
+      if (topcamFallback) {
+        final utc = DateFormat("yyyyMMdd'T'HHmmss'Z'");
+        return '$base/Streaming/tracks/${channel}01'
+            '?starttime=${utc.format(start.toUtc())}&endtime=${utc.format(finish.toUtc())}';
+      }
+      final local = DateFormat('yyyy_MM_dd_HH_mm_ss');
+      return '$base/playback/ch$channel'
+          '?starttime=${local.format(start)}&endtime=${local.format(finish)}';
     }
     if(n.manufacturer=='Hikvision') {
       if(start==null) return '$base/Streaming/Channels/${channel}01';
@@ -387,6 +403,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   int _plateCount = 0;
   bool _detecting = false;
   bool _analyzing = false;
+  Future<Uint8List>? _snapshotInFlight;
+  Future<void>? _playerTeardown;
   bool _foreground = true;
   String? _detectionError;
   String? selectedId;int channel=1;bool recording=false;DateTime? from;DateTime? to;
@@ -409,7 +427,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _speech.setMethodCallHandler(null);
     command.dispose();
     final active = player;
-    if (active != null) unawaited(_disposePlayer(active));
+    if (active != null) unawaited(_disposePlayer(active, _snapshotInFlight));
     super.dispose();
   }
 
@@ -420,23 +438,36 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     return widget.store.devices.isEmpty ? null : widget.store.devices.first;
   }
 
-  Future<void> _disposePlayer(VlcPlayerController controller) async {
+  Future<void> _waitForSnapshot(Future<Uint8List>? snapshot) async {
+    if (snapshot == null) return;
+    try {
+      await snapshot;
+    } catch (_) {
+      // The frame sampler handles the capture error.
+    }
+  }
+
+  Future<void> _disposePlayer(
+    VlcPlayerController controller, [Future<Uint8List>? snapshot],
+  ) async {
+    await _waitForSnapshot(snapshot);
     try {
       await controller.dispose();
-    } on PlatformException {
-      // The platform view may already have released the native player.
+    } catch (_) {
+      // The platform view can detach before the controller initializes.
     }
   }
 
   void _replacePlayer(VlcPlayerController? next) {
     final old = player;
-    if (old != null) _stopDetection();
-    player = next;
     if (old != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(_disposePlayer(old));
-      });
+      _stopDetection();
+      final snapshot = _snapshotInFlight;
+      _playerTeardown = WidgetsBinding.instance.endOfFrame.then(
+        (_) => _disposePlayer(old, snapshot),
+      );
     }
+    player = next;
   }
 
   bool _isCurrent(int request) => mounted && request == _playRequest;
@@ -466,6 +497,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     final port = int.tryParse(target.port);
     _streamTimeout?.cancel();
     _portCheck?.cancel();
+    _stopDetection();
+    final capture = _snapshotInFlight;
+    if (capture != null) {
+      setState(() => _connecting = true);
+      await _waitForSnapshot(capture);
+    }
+    if (!_isCurrent(request)) return;
     setState(() {
       _replacePlayer(null);
       _detections.clear();
@@ -483,6 +521,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _videoStatus = output;
     });
 
+    await _playerTeardown;
+    if (!_isCurrent(request)) return;
     if (port == null || port < 1 || port > 65535) {
       _finishAttempt(request, 'Edit the NVR and enter a valid RTSP port.');
       return;
@@ -509,11 +549,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       return;
     }
 
-    final alternateLink = start == null && target.manufacturer == 'Dahua'
-        ? StreamBuilderService.url(
-            target, cameraNumber, password: password, mainStream: true,
-          )
-        : null;
+    final alternateLink = switch (target.manufacturer) {
+      'Topcam' => StreamBuilderService.url(target, cameraNumber,
+          start: start, end: end, password: password, topcamFallback: true),
+      'Dahua' when start == null => StreamBuilderService.url(
+          target, cameraNumber, password: password, mainStream: true),
+      _ => null,
+    };
     _openStream(
       request, link, port, mode, source,
       softwareDecoding: false, alternateLink: alternateLink,
@@ -547,6 +589,10 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       if (!current() || failed) return;
       failed = true;
       _streamTimeout?.cancel();
+      _stopDetection();
+      final capture = _snapshotInFlight;
+      if (capture != null) await _waitForSnapshot(capture);
+      if (!current()) return;
       setState(() {
         _connecting = true;
         _hasVideo = false;
@@ -563,6 +609,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         );
         return;
       }
+      await _playerTeardown;
       if (!_isCurrent(request)) return;
       if (!started && (!softwareDecoding || alternateLink != null)) {
         final tryMainStream = softwareDecoding && alternateLink != null;
@@ -640,9 +687,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
 
   Future<void> pausePlayback() async {
     if (_connecting) {
-      ++_playRequest;
+      final request = ++_playRequest;
       _streamTimeout?.cancel();
       _portCheck?.cancel();
+      _stopDetection();
+      final capture = _snapshotInFlight;
+      if (capture != null) await _waitForSnapshot(capture);
+      if (!_isCurrent(request)) return;
       setState(() {
         _connecting = false;
         _replacePlayer(null);
@@ -700,8 +751,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   void _startDetection() {
     final active = player;
     final start = from;
-    if (!_hasVideo || active == null || start == null || active.value.isEnded) {
-      setState(() => _detectionError = 'Start recorded playback to detect people and plates.');
+    if (_connecting || !_hasVideo || active == null || start == null || active.value.isEnded) {
+      setState(() => _detectionError = 'Start recorded playback to detect people and vehicles.');
       return;
     }
     if (_detecting) return;
@@ -726,7 +777,14 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _analyzing = true;
     try {
       final timestamp = start.add(active.value.position);
-      final jpeg = await active.takeSnapshot();
+      final snapshot = active.takeSnapshot();
+      _snapshotInFlight = snapshot;
+      late final Uint8List jpeg;
+      try {
+        jpeg = await snapshot;
+      } finally {
+        _snapshotInFlight = null;
+      }
       if (!current() || !playing() || jpeg.isEmpty) return;
       final detected = await _detection.invokeListMethod<Map<Object?, Object?>>('analyze', jpeg);
       if (!current() || !playing() || detected == null || detected.isEmpty) return;
@@ -961,15 +1019,25 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           items: widget.store.devices.map((x) => DropdownMenuItem(
             value: x.id, child: Text(x.name, overflow: TextOverflow.ellipsis),
           )).toList(),
-          onChanged: (x) => setState(() => selectedId = x),
+          onChanged: (x) => setState(() {
+            if (x != n?.id) _stopDetection();
+            selectedId = x;
+          }),
         )),
         const SizedBox(width: 8),
         SizedBox(width: 138, child: DropdownButtonFormField<int>(
+          key: ValueKey((n?.id, n?.maxChannels, channel)),
           value: n == null ? 1 : channel <= n.maxChannels ? channel : 1,
           decoration: const InputDecoration(labelText: 'Camera', isDense: true, border: OutlineInputBorder()),
           items: List.generate(n?.maxChannels ?? 1,
             (i) => DropdownMenuItem(value: i + 1, child: Text('Cam ${i + 1}'))),
-          onChanged: n == null ? null : (v) => setState(() => channel = v ?? 1),
+          onChanged: n == null ? null : (v) {
+            if (v == null || v == channel) return;
+            setState(() {
+              _stopDetection();
+              channel = v;
+            });
+          },
         )),
       ])),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -1002,7 +1070,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         IconButton(
           onPressed: _detecting ? () => setState(_stopDetection) : _startDetection,
           icon: Icon(_detecting ? Icons.stop_circle_outlined : Icons.center_focus_strong),
-          tooltip: _detecting ? 'Stop detection' : 'Detect people and plates',
+          tooltip: _detecting ? 'Stop detection' : 'Detect people and vehicles',
         ),
         IconButton(onPressed: _voiceBusy ? null : toggleMic,
           icon: Icon(recording ? Icons.mic : Icons.mic_none), tooltip: 'Voice'),
