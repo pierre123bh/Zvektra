@@ -92,18 +92,18 @@ void main() {
 
     await tester.tap(find.text('Assistant'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Commands'));
-    await tester.pump();
-    await tester.enterText(find.byType(TextField), 'play back cam1 yesterday from 6:am to 6:06 am');
-    await tester.tap(find.byTooltip('Send command'));
+    await tester.tap(find.text('Playback'));
+    for (var attempt = 0; attempt < 20 && find.byType(VlcPlayer).evaluate().isEmpty; attempt++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(VlcPlayer), findsOneWidget, reason: 'Playback must open the VLC player');
     final playback = await waitForVideo(tester, '/cam/playback');
     debugPrint('Playback fixture is decoding');
     final query = Uri.parse(playback.dataSource).queryParameters;
-    expect(query['starttime'], endsWith('_06_00_00'));
-    expect(query['endtime'], endsWith('_06_06_00'));
+    expect(query['starttime'], endsWith('_12_00_00'));
+    expect(query['endtime'], endsWith('_13_00_00'));
 
-    await tester.enterText(find.byType(TextField), 'count people');
-    await tester.tap(find.byTooltip('Send command'));
+    await tester.tap(find.byTooltip('Detect people and plates'));
     await tester.pump();
     expect(find.byTooltip('Stop detection'), findsOneWidget);
     PlaybackDetectionResults? results;
