@@ -68,11 +68,13 @@ class AndroidSpeechVoice(
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
                                 if (Build.VERSION.SDK_INT >= 34) {
                                     putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true)
-                                    putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH, true)
+                                    val languages = arrayListOf("en-US", "ar-LB", "ar-SA")
+                                    putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH,
+                                        RecognizerIntent.LANGUAGE_SWITCH_BALANCED)
                                     putStringArrayListExtra(
-                                        RecognizerIntent.EXTRA_LANGUAGE_DETECTION_ALLOWED_LANGUAGES,
-                                        arrayListOf(locale, if (locale == "ar-LB") "en-US" else "ar-LB", "ar-SA")
-                                    )
+                                        RecognizerIntent.EXTRA_LANGUAGE_DETECTION_ALLOWED_LANGUAGES, languages)
+                                    putStringArrayListExtra(
+                                        RecognizerIntent.EXTRA_LANGUAGE_SWITCH_ALLOWED_LANGUAGES, languages)
                                 }
                             }
                             listening = true

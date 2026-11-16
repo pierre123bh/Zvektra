@@ -58,7 +58,7 @@ String _normalize(String input) {
     'فرجيني': 'show', 'فرجني': 'show', 'ورجيني': 'show', 'ورجني': 'show',
     'fergini': 'show', 'farjini': 'show', 'شغل': 'show', 'اعرض': 'show',
     'افتح': 'show', 'مباشر': 'live', 'لايف': 'live', 'تسجيل': 'playback',
-    'التسجيل': 'playback', 'المسجل': 'playback', 'recorded': 'playback',
+    'التسجيل': 'playback', 'المسجل': 'playback', 'recorded': 'playback', 'recording': 'playback',
     'مبارح': 'yesterday', 'امبارح': 'yesterday', 'البارحة': 'yesterday',
     'البارحه': 'yesterday', 'امس': 'yesterday', 'اليوم': 'today',
     'من': 'from', 'للساعة': 'to', 'لساعة': 'to', 'ل': 'to', 'لل': 'to', 'لحد': 'to', 'لغاية': 'to',
@@ -81,7 +81,8 @@ String _normalize(String input) {
     }
     return words[word] ?? _numbers[word] ?? (word == 'و' ? 'and' : word);
   }).where((word) => word.isNotEmpty).join(' ')
-      .replaceAllMapped(RegExp(r'\b(cam(?:era)?)(?=\d)'), (_) => 'cam ');
+      .replaceAllMapped(RegExp(r'\b(cam(?:era)?)(?=\d)'), (_) => 'cam ')
+      .replaceAllMapped(RegExp(r'\b(?:oh|o) (\d)\b'), (m) => '0${m[1]}');
 }
 
 DateTime? _voiceDate(String text, DateTime now) {
@@ -115,6 +116,7 @@ DateTime? _voiceDate(String text, DateTime now) {
 
 CameraVoiceCommand? parseCameraVoiceCommand(String transcript, DateTime now) {
   final text = _normalize(transcript)
+      .replaceFirst(RegExp(r'^(?:can|could|would) you '), '')
       .replaceAll(RegExp(r'\b(?:please|me|the|on|at|for)\b'), ' ')
       .replaceAll(RegExp(r'\s+'), ' ').trim();
   final live = RegExp(r'^(?:(?:show|open|play|live|view)\s+)*cam\s+(\d{1,3})(?:\s+live)?$')
@@ -139,10 +141,16 @@ CameraVoiceCommand? parseCameraVoiceCommand(String transcript, DateTime now) {
   if (endClock == null) return null;
   final before = playback[2];
   final after = endAndDate[3];
-  final date = _voiceDate(after ?? before ?? '', now);
+  final beforeDate = before == null ? null : _voiceDate(before, now);
+  final afterDate = after == null ? null : _voiceDate(after, now);
+  if ((before != null && beforeDate == null) ||
+      (after != null && afterDate == null)) return null;
+  final beforeRelative = before == 'today' || before == 'yesterday';
+  final afterRelative = after == 'today' || after == 'yesterday';
+  if (beforeDate != null && afterDate != null &&
+      beforeRelative == afterRelative && beforeDate != afterDate) return null;
+  final date = afterRelative ? beforeDate ?? afterDate : afterDate ?? beforeDate;
   if (date == null) return null;
-  if (before != null && after != null && before != 'today' &&
-      before != 'yesterday' && _voiceDate(before, now) != date) return null;
   DateTime at(int hour, int minute, String? period) => DateTime(
       date.year, date.month, date.day,
       period == null ? hour : hour % 12 + (period == 'pm' ? 12 : 0), minute);

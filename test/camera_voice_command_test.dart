@@ -16,8 +16,7 @@ void main() {
     final expected = (camera: 2, start: DateTime(2026, 11, 15, 12),
       end: DateTime(2026, 11, 15, 12, 6));
     expect(parse('Play back cam2 yesterday from 12 pm to 12:06 pm November 15, 2026'), expected);
-    expect(parse('playback camera two on November 15 2026 from twelve to twelve oh six pm'),
-      isNull, reason: 'unknown clock wording must not lead to a guessed time');
+    expect(parse('playback camera two on November 15 2026 from twelve to twelve oh six pm'), expected);
     expect(parse('playback camera two on 15 November 2026 from 12 to 12:06 pm'), expected);
     expect(parse('فرجيني playback cam2 بتاريخ 2026-11-15 من 12 للـ 12 وستة بعد الضهر'), expected);
   });
