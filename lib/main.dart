@@ -673,7 +673,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     }
   }
   Future<void> execute(String raw) async {
-    final text=raw.trim().toLowerCase();if(text.isEmpty)return;
+    final text=raw.trim().toLowerCase().replaceAll(RegExp(r':(?=\s*(?:am|pm)\b)'), '');if(text.isEmpty)return;
     for(final n in widget.store.devices){if(text.contains(n.name.toLowerCase()))selectedId=n.id;}
     final match=RegExp(r'(?:camera|channel|cam)\s*(\d+)').firstMatch(text);
     if(match!=null){final c=int.parse(match.group(1)!);if(selected!=null&&c<=selected!.maxChannels&&c>0)channel=c;else{setState(()=>output='Camera $c is outside the configured channel range.');return;}}
@@ -681,7 +681,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if(text.contains('count')||text.contains('detect')||text.contains('snapshot')){setState((){detectionRequested=true;output='Person detection requested. Native frame extraction and inference are not yet connected; no count or snapshots have been generated.';});return;}
     if(text.contains('pause')){await pausePlayback();return;}
     if(text.contains('resume')){await resumePlayback();return;}
-    if(text.contains('forward')||text.contains('back')){final seconds=int.tryParse(RegExp(r'\d+').firstMatch(text)?.group(0)??'30')??30;if(from==null){setState(()=>output='Choose recorded playback first.');return;}await play(start:from!.add(Duration(seconds:text.contains('back')?-seconds:seconds)));return;}
+    if(RegExp(r'\bforward\b|\bback\b|\brewind\b').hasMatch(text)){final seconds=int.tryParse(RegExp(r'\d+').firstMatch(text)?.group(0)??'30')??30;if(from==null){setState(()=>output='Choose recorded playback first.');return;}await play(start:from!.add(Duration(seconds:RegExp(r'\bback\b|\brewind\b').hasMatch(text)?-seconds:seconds)));return;}
     if (text.contains('record') || text.contains('playback') || text.contains('play back')) {
       final now = DateTime.now();
       DateTime date = _playbackDate;
