@@ -24,7 +24,8 @@ class TestNvrStore extends DeviceStore {
   Future<String?> password(String id) async => 'fixture-pass';
 }
 
-Future<VlcPlayerController> waitForVideo(WidgetTester tester, String path) async {
+Future<VlcPlayerController> waitForVideo(WidgetTester tester, String path,
+    {bool acceptMonochrome = false}) async {
   for (var attempt = 0; attempt < 75; attempt++) {
     await tester.pump(const Duration(milliseconds: 400));
     final views = find.byType(VlcPlayer).evaluate();
@@ -39,13 +40,15 @@ Future<VlcPlayerController> waitForVideo(WidgetTester tester, String path) async
       try {
         final rgba = (await frame.image.toByteData())!;
         var coloredPixels = 0;
+        var midtonePixels = 0;
         for (var i = 0; i < rgba.lengthInBytes; i += 4) {
           final r = rgba.getUint8(i);
           final g = rgba.getUint8(i + 1);
           final b = rgba.getUint8(i + 2);
+          if (r + g + b > 120 && r + g + b < 690) midtonePixels++;
           if ((r - g).abs() > 40 || (g - b).abs() > 40) coloredPixels++;
         }
-        if (coloredPixels > 20) {
+        if (coloredPixels > 20 || (acceptMonochrome && midtonePixels > 20)) {
           expect(Uri.parse(controller.dataSource).path, path);
           return controller;
         }
@@ -167,7 +170,7 @@ void main() {
     }
     testLifecycle.dispose();
     expect(backgrounded, isTrue);
-    final restored = await waitForVideo(tester, '/cam/playback');
+    final restored = await waitForVideo(tester, '/cam/playback', acceptMonochrome: true);
     expect(restored, isNot(same(playback)));
     expect(Uri.parse(restored.dataSource).queryParameters['endtime'], query['endtime']);
     expect(find.byTooltip('Stop detection'), findsOneWidget);

@@ -409,7 +409,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
       _suspendRecordedPlayback();
     } else if (_foreground && _recordingResume?.automatic == true) {
-      unawaited(resumePlayback());
+      unawaited(_restoreWhenVisible());
     }
     if (state != AppLifecycleState.paused || (!recording && !_voiceBusy && !_awaitingSpeech)) return;
     _cancelVoice();
@@ -802,6 +802,17 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _connecting = false;
       _videoStatus = 'Playback paused. Tap Resume to continue.';
     });
+  }
+
+  Future<void> _restoreWhenVisible() async {
+    final pending = _recordingResume;
+    // Let the Android window finish its foreground transition before attaching
+    // a new VLC texture. Abandon the restore if the user starts another stream.
+    await WidgetsBinding.instance.endOfFrame;
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    if (mounted && _foreground && identical(_recordingResume, pending)) {
+      await resumePlayback();
+    }
   }
 
   Future<void> resumePlayback() async {
