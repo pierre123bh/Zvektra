@@ -25,3 +25,7 @@ existing command parser handles execution after review.
 
 A build without the relay address continues to use the existing Android
 speech recognizer.
+
+For GitHub Actions, create the repository Actions variable
+`ZVEKTRA_VOICE_RELAY` with the same HTTPS URL, then run the Android build on
+`voice/openai-transcription`. Put both secrets on the relay host only.
