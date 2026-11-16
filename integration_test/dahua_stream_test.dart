@@ -23,19 +23,13 @@ class TestNvrStore extends DeviceStore {
   Future<String?> password(String id) async => 'fixture-pass';
 }
 
-Future<VlcPlayerController> waitForVideo(
-  WidgetTester tester, String path, {bool requireSnapshot = true}
-) async {
+Future<VlcPlayerController> waitForVideo(WidgetTester tester, String path) async {
   for (var attempt = 0; attempt < 75; attempt++) {
     await tester.pump(const Duration(milliseconds: 400));
     final views = find.byType(VlcPlayer).evaluate();
     if (views.isEmpty) continue;
     final controller = (views.single.widget as VlcPlayer).controller;
     if (!controller.value.isInitialized || !controller.value.isPlaying) continue;
-    if (!requireSnapshot && controller.value.position > Duration.zero) {
-      expect(Uri.parse(controller.dataSource).path, path);
-      return controller;
-    }
     final bytes = await controller.takeSnapshot();
     if (bytes.isEmpty) continue;
     final codec = await ui.instantiateImageCodec(bytes, targetWidth: 32);
@@ -150,6 +144,16 @@ void main() {
       }
     }
 
+    await tester.tap(find.byTooltip('Save photo to gallery').first);
+    final saved = find.text('Photo saved to your gallery.');
+    for (var attempt = 0; attempt < 30 && saved.evaluate().isEmpty; attempt++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(saved, findsOneWidget);
+    expect(tester.widget<VlcPlayer>(find.byType(VlcPlayer)).controller, same(playback));
+    expect(playback.value.isPlaying, isTrue);
+    expect(find.byTooltip('Stop detection'), findsOneWidget);
+
     await tester.tap(find.byTooltip('Stop detection'));
     await tester.pump();
     final stopped = tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults));
@@ -159,30 +163,6 @@ void main() {
     expect(tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults)).detections,
         hasLength(afterStop));
     expect(playback.value.isPlaying, isTrue);
-    const sharing = MethodChannel('net.zvektra/snapshot_share');
-    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    bool shared = false;
-    messenger.setMockMethodCallHandler(sharing, (call) async {
-      if (call.method == 'available') return true;
-      expect(call.method, 'whatsapp');
-      expect(call.arguments, isA<Uint8List>());
-      expect(find.byType(VlcPlayer), findsNothing);
-      shared = true;
-      return null;
-    });
-    await tester.tap(find.byTooltip('Share snapshot via WhatsApp').first);
-    await tester.pumpAndSettle();
-    expect(shared, isTrue);
-    expect(find.textContaining('Tap Resume'), findsOneWidget);
-    expect(find.byType(PlaybackDetectionResults), findsOneWidget);
-    messenger.setMockMethodCallHandler(sharing, null);
-    await tester.tap(find.byTooltip('Resume'));
-    // After replacing the Android texture, require the video-only stream's
-    // media clock to advance. The other test stages sample rendered pixels.
-    final resumed = await waitForVideo(tester, '/cam/playback', requireSnapshot: false);
-    expect(Uri.parse(resumed.dataSource).queryParameters['channel'], '1');
-    expect(Uri.parse(resumed.dataSource).queryParameters['endtime'], query['endtime']);
-
     await tester.tap(find.byTooltip('Detect people and vehicles'));
     await tester.pump();
     expect(find.byTooltip('Stop detection'), findsOneWidget);

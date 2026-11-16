@@ -23,14 +23,14 @@ class PlaybackDetectionResults extends StatelessWidget {
   final int peopleCount;
   final int plateCount;
   final bool running;
-  final ValueChanged<Uint8List> onShare;
+  final ValueChanged<Uint8List> onSave;
   const PlaybackDetectionResults({
     super.key,
     required this.detections,
     required this.peopleCount,
     required this.plateCount,
     required this.running,
-    required this.onShare,
+    required this.onSave,
   });
 
   @override
@@ -65,9 +65,9 @@ class PlaybackDetectionResults extends StatelessWidget {
               itemBuilder: (context, index) {
                 final detection = detections[detections.length - 1 - index];
                 return Tooltip(
-                  message: 'Share snapshot via WhatsApp',
+                  message: 'Save photo to gallery',
                   child: InkWell(
-                    onTap: () => onShare(detection.snapshot),
+                    onTap: () => onSave(detection.snapshot),
                     child: Padding(
                       padding: const EdgeInsets.all(4),
                       child: Column(children: [

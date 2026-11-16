@@ -422,11 +422,10 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   ConnectionTask<Socket>? _portCheck;
   int _playRequest = 0;
   bool _connecting = false;
-  bool _sharingSnapshot = false;
-  bool _resumeAfterShare = false;
+  bool _savingSnapshot = false;
   bool _hasVideo = false;
   String? _videoStatus;
-  ({String deviceId, int camera, DateTime? start, DateTime? end})? _lastStream;
+  ({String deviceId, int camera, DateTime? start})? _lastStream;
 
   @override
   void dispose() {
@@ -495,9 +494,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     });
   }
 
-  Future<void> play({DateTime? start, DateTime? end, Nvr? device, int? camera,
-      bool keepDetections = false}) async {
-    if (_sharingSnapshot) return;
+  Future<void> play({DateTime? start, DateTime? end, Nvr? device, int? camera}) async {
     final target = device ?? selected;
     if (target == null) {
       setState(() => output = 'Add an NVR in Devices first.');
@@ -519,16 +516,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (!_isCurrent(request)) return;
     setState(() {
       _replacePlayer(null);
-      if (!keepDetections) {
-        _detections.clear();
-        _peopleCount = 0;
-        _plateCount = 0;
-      }
-      _resumeAfterShare = false;
+      _detections.clear();
+      _peopleCount = 0;
+      _plateCount = 0;
       _detectionError = null;
       _connecting = true;
       _hasVideo = false;
-      _lastStream = (deviceId: target.id, camera: cameraNumber, start: start, end: end);
+      _lastStream = (deviceId: target.id, camera: cameraNumber, start: start);
       selectedId = target.id;
       channel = cameraNumber;
       from = start;
@@ -733,7 +727,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   }
 
   Future<void> resumePlayback() async {
-    if (_connecting || _sharingSnapshot) return;
+    if (_connecting) return;
     final active = player;
     if (_hasVideo && active != null) {
       try {
@@ -752,55 +746,33 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (last == null) return;
     for (final device in widget.store.devices) {
       if (device.id == last.deviceId) {
-        await play(start: last.start, end: _resumeAfterShare ? last.end : null,
-            device: device, camera: last.camera, keepDetections: _resumeAfterShare);
+        await play(start: last.start, device: device, camera: last.camera);
         return;
       }
     }
   }
-  Future<void> _sharePlaybackSnapshot(Uint8List snapshot) async {
-    if (_sharingSnapshot) return;
-    _sharingSnapshot = true;
-    const share = MethodChannel('net.zvektra/snapshot_share');
+  Future<void> _savePlaybackSnapshot(Uint8List snapshot) async {
+    if (_savingSnapshot) return;
+    _savingSnapshot = true;
+    const gallery = MethodChannel('net.zvektra/snapshot_gallery');
     try {
-      final available = await share.invokeMethod<bool>('available');
+      final needsPermission = await gallery.invokeMethod<bool>('requiresStoragePermission');
       if (!mounted) return;
-      if (available != true) {
-        _commandFeedback('Install WhatsApp or WhatsApp Business to share this snapshot.');
-        return;
+      if (needsPermission == true) {
+        final permission = await Permission.storage.request();
+        if (!mounted) return;
+        if (!permission.isGranted) {
+          _commandFeedback('Allow storage access to save photos to your gallery.');
+          return;
+        }
       }
-      final request = ++_playRequest;
-      _streamTimeout?.cancel();
-      _portCheck?.cancel();
-      setState(_stopDetection);
-      await _waitForSnapshot(_snapshotInFlight);
-      if (!_isCurrent(request)) return;
-      final active = player;
-      final last = _lastStream;
-      if (active != null && last != null) {
-        final elapsed = active.value.position;
-        final nextStart = last.start?.add(elapsed);
-        final canResumeAtPosition =
-            nextStart != null && (last.end == null || nextStart.isBefore(last.end!));
-        _lastStream = (
-          deviceId: last.deviceId, camera: last.camera,
-          start: canResumeAtPosition ? nextStart : last.start, end: last.end,
-        );
-        _resumeAfterShare = true;
-      }
-      setState(() {
-        _replacePlayer(null);
-        _hasVideo = false;
-        _connecting = false;
-        _videoStatus = 'Playback paused for sharing. Tap Resume to continue.';
-      });
-      await _playerTeardown;
-      if (!_isCurrent(request)) return;
-      await share.invokeMethod<void>('whatsapp', snapshot);
+      _commandFeedback('Saving photo to your gallery…');
+      await gallery.invokeMethod<void>('save', snapshot);
+      _commandFeedback('Photo saved to your gallery.');
     } on Exception {
-      _commandFeedback('Could not open WhatsApp to share this snapshot.');
+      _commandFeedback('Could not save the photo. Tap it to try again.');
     } finally {
-      _sharingSnapshot = false;
+      _savingSnapshot = false;
     }
   }
 
@@ -1164,9 +1136,9 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
                 peopleCount: _peopleCount,
                 plateCount: _plateCount,
                 running: false,
-                onShare: (snapshot) {
+                onSave: (snapshot) {
                   Navigator.pop(context);
-                  unawaited(_sharePlaybackSnapshot(snapshot));
+                  unawaited(_savePlaybackSnapshot(snapshot));
                 },
               )),
             ),
@@ -1191,7 +1163,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           peopleCount: _peopleCount,
           plateCount: _plateCount,
           running: _detecting,
-          onShare: _sharePlaybackSnapshot,
+          onSave: _savePlaybackSnapshot,
         ),
       if (_showCommands) Padding(
         padding: const EdgeInsets.all(6),
