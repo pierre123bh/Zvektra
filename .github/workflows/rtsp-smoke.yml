@@ -1,4 +1,4 @@
-name: Android streaming and Whisper smoke test
+name: Android streaming and playback detection smoke test
 on:
   workflow_dispatch:
   push:
@@ -39,6 +39,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Start authenticated RTSP fixture
         run: |
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/ultralytics/ultralytics/ef512bfc250a91fa75632efd1f3b7cc87a0cac3e/ultralytics/assets/bus.jpg -o /tmp/people.jpg
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/ankandrew/fast-alpr/c5a94706f175590b2bc09aa86f46182d4c267fae/assets/test_image.png -o /tmp/plates.png
+          ffmpeg -hide_banner -loglevel error -filter_complex_threads 1 -i /tmp/people.jpg -i /tmp/plates.png \
+            -filter_complex '[0:v]scale=320:360:force_original_aspect_ratio=decrease,pad=320:360:(ow-iw)/2:(oh-ih)/2[people];[1:v]scale=320:360:force_original_aspect_ratio=decrease,pad=320:360:(ow-iw)/2:(oh-ih)/2[plates];[people][plates]hstack' \
+            -frames:v 1 -update 1 /tmp/playback.png
           cat > /tmp/mediamtx.yml <<'EOF'
           logLevel: warn
           rtspTransports: [tcp]
@@ -60,9 +65,14 @@ jobs:
             sleep 1
           done
           nc -z 127.0.0.1 8554
-          for path in realmonitor playback; do
-            ffmpeg -nostdin -hide_banner -loglevel error -re               -f lavfi -i testsrc2=size=320x240:rate=10 -an -c:v libx264               -preset ultrafast -tune zerolatency -g 10 -pix_fmt yuv420p               -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/cam/$path"               >"/tmp/$path.log" 2>&1 &
-          done
+          ffmpeg -nostdin -hide_banner -loglevel error -re \
+            -f lavfi -i testsrc2=size=320x240:rate=10 -an -c:v libx264 \
+            -preset ultrafast -tune zerolatency -g 10 -pix_fmt yuv420p \
+            -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam/realmonitor >/tmp/realmonitor.log 2>&1 &
+          ffmpeg -nostdin -hide_banner -loglevel error -re \
+            -loop 1 -framerate 10 -i /tmp/playback.png -an -c:v libx264 \
+            -preset ultrafast -tune zerolatency -g 10 -pix_fmt yuv420p \
+            -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam/playback >/tmp/playback.log 2>&1 &
           sleep 2
           for path in realmonitor playback; do
             timeout 12 ffprobe -v error -rtsp_transport tcp               "rtsp://viewer:fixture-pass@127.0.0.1:8554/cam/$path"
@@ -78,4 +88,4 @@ jobs:
           api-level: 34
           arch: x86_64
           disable-animations: true
-          script: bash integration_test/run_whisper_preview.sh
+          script: bash integration_test/run_release_rtsp.sh

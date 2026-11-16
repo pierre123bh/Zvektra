@@ -1,4 +1,5 @@
 import 'multi_camera.dart';
+import 'playback_detection_results.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -350,6 +351,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
     if (state != AppLifecycleState.paused || (!recording && !_voiceBusy)) return;
     _cancelVoice();
     setState(() {
@@ -376,8 +378,17 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   }
   String output='Ready. Select an NVR and tell Zvektra what to play.';
   bool awaitingVoiceReview=false;
-  bool detectionRequested=false;
-  final List<String> detectionEvents=[];
+  static const _detection = MethodChannel('net.zvektra/playback_detection');
+  static const _snapshotLimit = 200;
+  final _detections = <PlaybackDetection>[];
+  Timer? _detectionTimer;
+  int _detectionSession = 0;
+  int _peopleCount = 0;
+  int _plateCount = 0;
+  bool _detecting = false;
+  bool _analyzing = false;
+  bool _foreground = true;
+  String? _detectionError;
   String? selectedId;int channel=1;bool recording=false;DateTime? from;DateTime? to;
   VlcPlayerController? player;
   Timer? _streamTimeout;
@@ -392,6 +403,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   void dispose() {
     _streamTimeout?.cancel();
     _portCheck?.cancel();
+    _stopDetection();
     WidgetsBinding.instance.removeObserver(this);
     _cancelVoice();
     _speech.setMethodCallHandler(null);
@@ -418,6 +430,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
 
   void _replacePlayer(VlcPlayerController? next) {
     final old = player;
+    if (old != null) _stopDetection();
     player = next;
     if (old != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -455,6 +468,10 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _portCheck?.cancel();
     setState(() {
       _replacePlayer(null);
+      _detections.clear();
+      _peopleCount = 0;
+      _plateCount = 0;
+      _detectionError = null;
       _connecting = true;
       _hasVideo = false;
       _lastStream = (deviceId: target.id, camera: cameraNumber, start: start);
@@ -563,6 +580,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
 
     next.addListener(() {
       if (!current() || failed) return;
+      if (next.value.isEnded && _detecting) setState(_stopDetection);
       if (next.value.hasError) {
         unawaited(handleFailure());
       } else if (!started && (next.value.isPlaying || next.value.position > Duration.zero)) {
@@ -672,13 +690,88 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       }
     }
   }
+  void _stopDetection() {
+    ++_detectionSession;
+    _detectionTimer?.cancel();
+    _detectionTimer = null;
+    _detecting = false;
+  }
+
+  void _startDetection() {
+    final active = player;
+    final start = from;
+    if (!_hasVideo || active == null || start == null || active.value.isEnded) {
+      setState(() => _detectionError = 'Start recorded playback to detect people and plates.');
+      return;
+    }
+    if (_detecting) return;
+    final session = ++_detectionSession;
+    final camera = _lastStream!.camera;
+    setState(() {
+      _detecting = true;
+      _detectionError = null;
+    });
+    void sample() => unawaited(_analyzePlaybackFrame(active, start, camera, session));
+    _detectionTimer = Timer.periodic(const Duration(seconds: 1), (_) => sample());
+    sample();
+  }
+
+  Future<void> _analyzePlaybackFrame(
+    VlcPlayerController active, DateTime start, int camera, int session,
+  ) async {
+    bool current() => mounted && session == _detectionSession && identical(active, player);
+    bool playing() => _foreground && active.value.isInitialized &&
+        active.value.isPlaying && !active.value.isBuffering;
+    if (!current() || !playing() || _analyzing) return;
+    _analyzing = true;
+    try {
+      final timestamp = start.add(active.value.position);
+      final jpeg = await active.takeSnapshot();
+      if (!current() || !playing() || jpeg.isEmpty) return;
+      final detected = await _detection.invokeListMethod<Map<Object?, Object?>>('analyze', jpeg);
+      if (!current() || !playing() || detected == null || detected.isEmpty) return;
+      final results = detected.map((entry) => PlaybackDetection(
+        kind: PlaybackDetectionKind.values.byName(entry['kind'] as String),
+        timestamp: timestamp,
+        camera: camera,
+        snapshot: entry['snapshot'] as Uint8List,
+      ));
+      setState(() {
+        for (final result in results) {
+          if (result.kind == PlaybackDetectionKind.person) {
+            _peopleCount++;
+          } else {
+            _plateCount++;
+          }
+          _detections.add(result);
+        }
+        final excess = _detections.length - _snapshotLimit;
+        if (excess > 0) _detections.removeRange(0, excess);
+      });
+    } catch (_) {
+      if (!current() || !playing()) return;
+      setState(() {
+        _stopDetection();
+        _detectionError = 'Could not analyze the playback frame. Try starting detection again.';
+      });
+    } finally {
+      _analyzing = false;
+    }
+  }
+
   Future<void> execute(String raw) async {
     final text=raw.trim().toLowerCase().replaceAll(RegExp(r':(?=\s*(?:am|pm)\b)'), '');if(text.isEmpty)return;
     for(final n in widget.store.devices){if(text.contains(n.name.toLowerCase()))selectedId=n.id;}
     final match=RegExp(r'(?:camera|channel|cam)\s*(\d+)').firstMatch(text);
     if(match!=null){final c=int.parse(match.group(1)!);if(selected!=null&&c<=selected!.maxChannels&&c>0)channel=c;else{setState(()=>output='Camera $c is outside the configured channel range.');return;}}
-    if(text.contains('stop counting')||text.contains('stop detection')){setState((){detectionRequested=false;output='Detection request stopped. The native AI engine is not yet connected.';});return;}
-    if(text.contains('count')||text.contains('detect')||text.contains('snapshot')){setState((){detectionRequested=true;output='Person detection requested. Native frame extraction and inference are not yet connected; no count or snapshots have been generated.';});return;}
+    if (RegExp(r'\bstop (counting|detection|detecting)\b').hasMatch(text)) {
+      setState(_stopDetection);
+      return;
+    }
+    if (RegExp(r'\b(count|detect|snapshot)\b').hasMatch(text)) {
+      _startDetection();
+      return;
+    }
     if(text.contains('pause')){await pausePlayback();return;}
     if(text.contains('resume')){await resumePlayback();return;}
     if(RegExp(r'^(?:skip\s+)?(?:forward|back|rewind)\b').hasMatch(text)){final seconds=int.tryParse(RegExp(r'\d+').firstMatch(text)?.group(0)??'30')??30;if(from==null){setState(()=>output='Choose recorded playback first.');return;}await play(start:from!.add(Duration(seconds:RegExp(r'\bback\b|\brewind\b').hasMatch(text)?-seconds:seconds)));return;}
@@ -904,6 +997,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         IconButton(onPressed: pausePlayback, icon: const Icon(Icons.pause), tooltip: 'Pause'),
         IconButton(onPressed: resumePlayback, icon: const Icon(Icons.play_arrow), tooltip: 'Resume'),
         const Spacer(),
+        IconButton(
+          onPressed: _detecting ? () => setState(_stopDetection) : _startDetection,
+          icon: Icon(_detecting ? Icons.stop_circle_outlined : Icons.center_focus_strong),
+          tooltip: _detecting ? 'Stop detection' : 'Detect people and plates',
+        ),
         IconButton(onPressed: _voiceBusy ? null : toggleMic,
           icon: Icon(recording ? Icons.mic : Icons.mic_none), tooltip: 'Voice'),
         IconButton(onPressed: () => setState(() => _showCommands = !_showCommands),
@@ -915,6 +1013,18 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(12),border: Border.all(color:cyan.withValues(alpha:0.2))),
         child: _videoPanel(),
       )),
+      if (_detectionError case final message?)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(message, style: Theme.of(context).textTheme.bodySmall),
+        ),
+      if (bounds.maxHeight >= 345 && (_detecting || _detections.isNotEmpty))
+        PlaybackDetectionResults(
+          detections: _detections,
+          peopleCount: _peopleCount,
+          plateCount: _plateCount,
+          running: _detecting,
+        ),
       if (_showCommands) Padding(
         padding: const EdgeInsets.all(6),
         child: Row(children: [

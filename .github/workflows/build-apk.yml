@@ -48,6 +48,9 @@ jobs:
               assert native == {'arm64-v8a'}, native
               assert 'lib/arm64-v8a/libvlc.so' in archive.namelist()
               assert 'lib/arm64-v8a/libapp.so' in archive.namelist()
+              assert 'lib/arm64-v8a/libonnxruntime.so' in archive.namelist()
+              for name in ('people', 'plates'):
+                  assert archive.getinfo(f'assets/detection/{name}.onnx').file_size > 1_000_000
               pattern = rb'dev\.flutter\.pigeon\.[A-Za-z0-9_.]*VlcPlayerApi\.initialize'
               dart = set(re.findall(pattern, archive.read('lib/arm64-v8a/libapp.so')))
               android = {match for name in archive.namelist() if name.endswith('.dex')

@@ -1,0 +1,7 @@
+People model: ONNX Model Zoo SSD MobileNet v1, opset 12, INT8.
+https://huggingface.co/onnxmodelzoo/ssd_mobilenet_v1_12-int8
+Apache License 2.0
+
+License plate model: Open Image Models YOLOv9-t-384 end-to-end plate detector.
+https://github.com/ankandrew/open-image-models
+See open-image-models-LICENSE.txt.

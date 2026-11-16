@@ -1,3 +1,6 @@
+import java.net.URI
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -57,5 +60,48 @@ flutter {
 // the published Flutter platform interface.
 dependencies {
     implementation("org.videolan.android:libvlc-all:3.6.3")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
     androidTestImplementation("androidx.test:runner:1.2.0")
 }
+
+// Bundle pinned weights in the APK so playback detection works offline.
+val detectionAssets = layout.buildDirectory.dir("generated/detectionAssets")
+val detectionModels = mapOf(
+    "people" to (
+        "https://huggingface.co/onnxmodelzoo/ssd_mobilenet_v1_12-int8/resolve/main/ssd_mobilenet_v1_12-int8.onnx" to
+        "2b79e6a7fb1ec6a33f332b9b10d82d9de4b7b49dcd26b5946921bb356895c954"
+    ),
+    "plates" to (
+        "https://github.com/ankandrew/open-image-models/releases/download/assets/yolo-v9-t-384-license-plates-end2end.onnx" to
+        "888397b96d761c89db40bc9c305838e8652660f5e282c2cadebbe8d2951a77a8"
+    ),
+)
+val prepareDetectionModels by tasks.registering {
+    inputs.property("models", detectionModels.mapValues { it.value.toList() })
+    outputs.dir(detectionAssets)
+    doLast {
+        val folder = detectionAssets.get().dir("detection").asFile
+        folder.mkdirs()
+        for ((name, source) in detectionModels) {
+            val (url, checksum) = source
+            val model = folder.resolve("$name.onnx")
+            val staged = folder.resolve("$name.download")
+            try {
+                val connection = URI.create(url).toURL().openConnection()
+                connection.connectTimeout = 30_000
+                connection.readTimeout = 60_000
+                connection.getInputStream().use { input ->
+                    staged.outputStream().use { input.copyTo(it) }
+                }
+                val actual = MessageDigest.getInstance("SHA-256")
+                    .digest(staged.readBytes()).joinToString("") { "%02x".format(it) }
+                check(actual == checksum) { "Unexpected checksum for $name detection model" }
+                staged.copyTo(model, overwrite = true)
+            } finally {
+                staged.delete()
+            }
+        }
+    }
+}
+android.sourceSets.getByName("main").assets.srcDir(detectionAssets)
+tasks.named("preBuild").configure { dependsOn(prepareDetectionModels) }

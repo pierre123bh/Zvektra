@@ -20,17 +20,19 @@ class PlaybackDetection {
 /// Displays only verified detector outputs. Repeated appearances count separately.
 class PlaybackDetectionResults extends StatelessWidget {
   final List<PlaybackDetection> detections;
+  final int peopleCount;
+  final int plateCount;
   final bool running;
   const PlaybackDetectionResults({
     super.key,
     required this.detections,
+    required this.peopleCount,
+    required this.plateCount,
     required this.running,
   });
 
   @override
   Widget build(BuildContext context) {
-    final people = detections.where((d) => d.kind == PlaybackDetectionKind.person).toList();
-    final plates = detections.where((d) => d.kind == PlaybackDetectionKind.licensePlate).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -38,10 +40,10 @@ class PlaybackDetectionResults extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(children: [
             const Icon(Icons.person_outline, size: 18),
-            Text(' People: ${people.length}'),
+            Text(' People: $peopleCount'),
             const SizedBox(width: 16),
             const Icon(Icons.directions_car_outlined, size: 18),
-            Text(' Plates: ${plates.length}'),
+            Text(' Plates: $plateCount'),
             const Spacer(),
             if (running) const SizedBox(width: 14, height: 14,
               child: CircularProgressIndicator(strokeWidth: 2)),
@@ -59,7 +61,7 @@ class PlaybackDetectionResults extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               itemCount: detections.length,
               itemBuilder: (context, index) {
-                final detection = detections[index];
+                final detection = detections[detections.length - 1 - index];
                 return Padding(
                   padding: const EdgeInsets.all(4),
                   child: Column(children: [
