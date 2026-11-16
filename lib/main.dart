@@ -406,6 +406,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
+      _suspendRecordedPlayback();
+    } else if (_foreground && _recordingResume?.automatic == true) {
+      unawaited(resumePlayback());
+    }
     if (state != AppLifecycleState.paused || (!recording && !_voiceBusy && !_awaitingSpeech)) return;
     _cancelVoice();
     setState(() {
@@ -445,6 +450,9 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   Future<Uint8List>? _snapshotInFlight;
   Future<void>? _playerTeardown;
   bool _foreground = true;
+  ({String deviceId, int camera, DateTime start, DateTime? end,
+      bool automatic, bool detect})? _recordingResume;
+  bool _restoreDetection = false;
   String? _detectionError;
   String? selectedId;int channel=1;bool recording=false;DateTime? from;DateTime? to;
   VlcPlayerController? player;
@@ -524,13 +532,16 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     });
   }
 
-  Future<void> play({DateTime? start, DateTime? end, Nvr? device, int? camera}) async {
+  Future<void> play({DateTime? start, DateTime? end, Nvr? device, int? camera,
+      bool restore = false, bool restoreDetection = false}) async {
     final target = device ?? selected;
     if (target == null) {
       setState(() => output = 'Add a device in Devices first.');
       return;
     }
 
+    _recordingResume = null;
+    _restoreDetection = restoreDetection;
     final request = ++_playRequest;
     final cameraNumber = (camera ?? channel).clamp(1, target.maxChannels).toInt();
     final source = '${target.name}, camera $cameraNumber';
@@ -546,9 +557,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (!_isCurrent(request)) return;
     setState(() {
       _replacePlayer(null);
-      _detections.clear();
-      _peopleCount = 0;
-      _plateCount = 0;
+      if (!restore) {
+        _detections.clear();
+        _peopleCount = 0;
+        _plateCount = 0;
+      }
       _detectionError = null;
       _connecting = true;
       _hasVideo = false;
@@ -615,6 +628,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       link,
       hwAcc: softwareDecoding ? HwAcc.disabled : HwAcc.auto,
       autoPlay: true,
+      // Recorded playback is restored with a fresh surface by this screen.
+      allowBackgroundPlayback: mode == 'Recorded playback',
       options: VlcPlayerOptions(
         rtp: VlcRtpOptions([VlcRtpOptions.rtpOverRtsp(true)]),
         advanced: VlcAdvancedOptions([VlcAdvancedOptions.networkCaching(1000)]),
@@ -678,6 +693,10 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           _hasVideo = true;
           output = '$mode: $source';
         });
+        if (_restoreDetection) {
+          _restoreDetection = false;
+          _startDetection();
+        }
       }
     });
 
@@ -756,8 +775,45 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     }
   }
 
+  void _suspendRecordedPlayback() {
+    final last = _lastStream;
+    final start = last?.start;
+    if (_recordingResume != null || last == null || start == null ||
+        (player == null && !_connecting) || player?.value.isEnded == true) return;
+
+    final position = player?.value.position ?? Duration.zero;
+    final nextStart = start.add(position);
+    final end = to;
+    if (end != null && !nextStart.isBefore(end)) return;
+    _recordingResume = (
+      deviceId: last.deviceId, camera: last.camera, start: nextStart, end: end,
+      automatic: _connecting || player?.value.isPlaying == true,
+      detect: _detecting || _restoreDetection,
+    );
+    ++_playRequest;
+    _streamTimeout?.cancel();
+    _portCheck?.cancel();
+    setState(() {
+      _replacePlayer(null);
+      _hasVideo = false;
+      _connecting = false;
+      _videoStatus = 'Playback paused. Tap Resume to continue.';
+    });
+  }
+
   Future<void> resumePlayback() async {
-    if (_connecting) return;
+    if (_connecting || !_foreground) return;
+    final suspended = _recordingResume;
+    if (suspended != null) {
+      for (final device in widget.store.devices) {
+        if (device.id == suspended.deviceId) {
+          await play(start: suspended.start, end: suspended.end, device: device,
+              camera: suspended.camera, restore: true, restoreDetection: suspended.detect);
+          return;
+        }
+      }
+      return;
+    }
     final active = player;
     if (_hasVideo && active != null) {
       try {

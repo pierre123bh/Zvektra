@@ -11,7 +11,18 @@ adb reverse tcp:8554 tcp:8554
 adb install build/app/outputs/flutter-apk/app-release.apk
 adb logcat -c
 adb shell am start -W -n net.zvektra.zvektra.whisper/net.zvektra.zvektra.MainActivity
+backgrounded=false
 for attempt in {1..75}; do
+  if ! "$backgrounded" &&
+     adb logcat -d -s flutter:I | grep -F 'ZVEKTRA_READY_FOR_BACKGROUND'; then
+    adb shell input keyevent KEYCODE_HOME
+    for transition in {1..20}; do
+      if adb logcat -d -s flutter:I | grep -F 'ZVEKTRA_BACKGROUND_CONFIRMED'; then break; fi
+      sleep 0.25
+    done
+    adb shell am start -W -n net.zvektra.zvektra.whisper/net.zvektra.zvektra.MainActivity
+    backgrounded=true
+  fi
   if adb logcat -d -s flutter:I | grep -F 'ZVEKTRA_PLAYBACK_DETECTION_OK'; then
     echo 'Release APK rendered both authenticated RTSP routes and detected both classes from recorded playback.'
     exit 0

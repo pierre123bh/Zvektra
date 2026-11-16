@@ -155,6 +155,25 @@ void main() {
     expect(playback.value.isPlaying, isTrue);
     expect(find.byTooltip('Stop detection'), findsOneWidget);
 
+    var backgrounded = false;
+    final testLifecycle = AppLifecycleListener(onPause: () {
+      backgrounded = true;
+      debugPrint('ZVEKTRA_BACKGROUND_CONFIRMED');
+    });
+    debugPrint('ZVEKTRA_READY_FOR_BACKGROUND');
+    for (var attempt = 0; attempt < 60; attempt++) {
+      await tester.pump(const Duration(milliseconds: 250));
+      if (backgrounded && WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) break;
+    }
+    testLifecycle.dispose();
+    expect(backgrounded, isTrue);
+    final restored = await waitForVideo(tester, '/cam/playback');
+    expect(restored, isNot(same(playback)));
+    expect(Uri.parse(restored.dataSource).queryParameters['endtime'], query['endtime']);
+    expect(find.byTooltip('Stop detection'), findsOneWidget);
+    expect(tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults))
+        .detections.length, greaterThanOrEqualTo(matches.length));
+
     await tester.tap(find.byTooltip('Stop detection'));
     await tester.pump();
     final stopped = tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults));
@@ -163,7 +182,7 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     expect(tester.widget<PlaybackDetectionResults>(find.byType(PlaybackDetectionResults)).detections,
         hasLength(afterStop));
-    expect(playback.value.isPlaying, isTrue);
+    expect(restored.value.isPlaying, isTrue);
     await tester.tap(find.byTooltip('Detect people and vehicles'));
     await tester.pump();
     expect(find.byTooltip('Stop detection'), findsOneWidget);
@@ -175,7 +194,7 @@ void main() {
     await tester.tap(find.text('Playback'));
     final second = await waitForVideo(tester, '/cam/playback');
     expect(Uri.parse(second.dataSource).queryParameters['channel'], '2');
-    expect(second, isNot(same(playback)));
+    expect(second, isNot(same(restored)));
     debugPrint('ZVEKTRA_PLAYBACK_DETECTION_OK');
   });
 }
