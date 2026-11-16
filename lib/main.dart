@@ -448,7 +448,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   }
 
   Future<void> _disposePlayer(
-    VlcPlayerController controller, [Future<Uint8List>? snapshot],
+    VlcPlayerController controller, [Future<Uint8List>? snapshot]
   ) async {
     await _waitForSnapshot(snapshot);
     try {

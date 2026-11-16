@@ -100,8 +100,8 @@ class _CameraTileState extends State<CameraTile> {
       setState(() => status = 'Live stream unsupported for ${nvr!.manufacturer}');
       return;
     }
-    final fallback = nvr?.manufacturer == 'Topcam'
-        ? StreamBuilderService.url(nvr!, camera, password: password, topcamFallback: true)
+    final fallback = nvr.manufacturer == 'Topcam'
+        ? StreamBuilderService.url(nvr, camera, password: password, topcamFallback: true)
         : null;
     _openLive(request, url, fallback: fallback);
   }
