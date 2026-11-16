@@ -1,4 +1,5 @@
 import 'arabic_playback_command.dart';
+import 'camera_voice_command.dart';
 import 'multi_camera.dart';
 import 'playback_detection_results.dart';
 import 'zvektra_theme.dart';
@@ -375,25 +376,119 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadVoiceLanguage());
     _speech.setMethodCallHandler((call) async {
       if (!mounted || !(recording || _voiceBusy || _awaitingSpeech)) return;
       if (call.method != 'recognized' && call.method != 'speechError') return;
-      final arg = call.arguments;
-      final transcript = call.method == 'recognized' && arg is String ? arg.trim() : '';
+      final payload = call.arguments;
+      final transcript = call.method == 'recognized' && payload is Map
+          ? payload['text'] as String? : null;
+      final confidence = payload is Map ? payload['confidence'] as num? : null;
       _cancelVoice();
       setState(() {
         recording = false;
         _voiceBusy = false;
         _awaitingSpeech = false;
-        awaitingVoiceReview = transcript.isNotEmpty;
-        if (transcript.isNotEmpty) {
-          _showCommands = true;
-          command.value = TextEditingValue(text: transcript,
-            selection: TextSelection.collapsed(offset: transcript.length));
-        }
       });
-      if (transcript.isEmpty) _commandFeedback('No speech recognized. Please try again.');
+      await _handleVoiceCommand(transcript ?? '', confidence);
     });
+  }
+
+  static const _voiceLanguageKey = 'voice_language';
+  VoiceLanguage _voiceLanguage = VoiceLanguage.lebanese;
+  bool _voiceLanguageChosen = false;
+
+  Future<void> _loadVoiceLanguage() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (mounted && !_voiceLanguageChosen &&
+          prefs.getString(_voiceLanguageKey) == VoiceLanguage.english.locale) {
+        setState(() => _voiceLanguage = VoiceLanguage.english);
+      }
+    } on Exception {
+      // The current selection remains usable without preferences.
+    }
+  }
+
+  Future<void> _selectVoiceLanguage(VoiceLanguage language) async {
+    setState(() {
+      _voiceLanguageChosen = true;
+      _voiceLanguage = language;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_voiceLanguageKey, language.locale);
+    } on Exception {
+      // Keep the selection for this screen even if persistence fails.
+    }
+  }
+
+  Future<bool> _speak(String message) async {
+    try {
+      return await _speech.invokeMethod<bool>('speak', {
+        'text': message,
+        'locale': _voiceLanguage.locale,
+      }) ?? false;
+    } on Exception {
+      return false;
+    }
+  }
+
+  Future<void> _voiceFeedback(String english, String arabic) async {
+    if (!mounted) return;
+    final message = _voiceLanguage.say(english, arabic);
+    _commandFeedback(message);
+    await _speak(message);
+  }
+
+  Future<void> _askToRepeat() => _voiceFeedback(
+      'Please repeat. For playback, give the camera, date, start time and end time.',
+      'عيد الطلب لو سمحت. للتسجيل، قلّي رقم الكاميرا والتاريخ ووقت البداية والنهاية.');
+
+  Future<void> _handleVoiceCommand(String transcript, num? confidence) async {
+    if (confidence != null && confidence >= 0 && confidence < 0.6) {
+      await _askToRepeat();
+      return;
+    }
+    final parsed = parseCameraVoiceCommand(transcript, DateTime.now());
+    if (parsed == null) {
+      final action = transcript.trim().toLowerCase().replaceFirst(RegExp(r'[.!?]$'), '');
+      if (RegExp(r'^(?:pause|resume)(?: playback)?$|^(?:stop )?(?:count|counting|detect|detecting|detection|snapshot)(?: people| vehicles)?$|^(?:skip )?(?:forward|back|rewind)(?: \d+ seconds?)?$').hasMatch(action)) {
+        await execute(action);
+        return;
+      }
+      await _askToRepeat();
+      return;
+    }
+    final device = selected;
+    if (device == null) {
+      await _voiceFeedback('Select a device first.', 'اختار جهاز بالأول.');
+      return;
+    }
+    if (parsed.camera > device.maxChannels) {
+      await _voiceFeedback('Please give a valid camera number.', 'قلّي رقم كاميرا موجودة عالجهاز.');
+      return;
+    }
+    final start = parsed.start;
+    final end = parsed.end;
+    if (start != null && end != null) {
+      setState(() {
+        _playbackDate = DateTime(start.year, start.month, start.day);
+        _playbackFrom = TimeOfDay.fromDateTime(start);
+        _playbackTo = TimeOfDay.fromDateTime(end);
+      });
+    }
+    try {
+      final connection = play(
+        device: device, camera: parsed.camera, start: start, end: end,
+      );
+      unawaited(start == null
+          ? _voiceFeedback('Opening camera ${parsed.camera} live.', 'عم افتح الكاميرا ${parsed.camera} مباشر.')
+          : _voiceFeedback('Opening camera ${parsed.camera} playback.', 'عم افتح تسجيل الكاميرا ${parsed.camera}.'));
+      await connection;
+    } on Exception {
+      await _voiceFeedback('Could not open the camera.', 'ما قدرت افتح الكاميرا.');
+    }
   }
 
   void _commandFeedback(String message) {
@@ -437,7 +532,6 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     }
   }
   String output='Ready. Select a device and tell Zvektra what to play.';
-  bool awaitingVoiceReview=false;
   static const _detection = MethodChannel('net.zvektra/playback_detection');
   static const _snapshotLimit = 200;
   final _detections = <PlaybackDetection>[];
@@ -1104,7 +1198,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           if (!current() || !_awaitingSpeech) return;
           _cancelVoice();
           setState(() { _awaitingSpeech = false; _voiceBusy = false; });
-          _commandFeedback('Speech recognition timed out. Please try again.');
+          unawaited(_askToRepeat());
         });
         await _speech.invokeMethod<void>('stop');
       } else {
@@ -1114,7 +1208,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           setState(() => output = 'Allow microphone access to record a command.');
           return;
         }
-        await _speech.invokeMethod<void>('start');
+        final prompt = _voiceLanguage.say('What would you like to see?', 'شو بدّك فرجيك؟');
+        final spoken = await _speak(prompt);
+        if (!current()) return;
+        if (!spoken) _commandFeedback(prompt);
+        await _speech.invokeMethod<void>('start', {'locale': _voiceLanguage.locale});
         if (!current()) return;
         setState(() {
           recording = true;
@@ -1132,8 +1230,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           _awaitingSpeech = false;
           _voiceBusy = false;
         });
-        _commandFeedback(ending ? 'Speech recognition failed. Please try again.'
-            : 'Could not start voice recognition.');
+        if (ending) {
+          await _askToRepeat();
+        } else {
+          await _voiceFeedback('Could not start voice recognition.', 'ما قدرت شغّل التعرّف عالصوت.');
+        }
       }
     } finally {
       if (current()) setState(() => _voiceBusy = false);
@@ -1242,6 +1343,15 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         ),
         IconButton(onPressed: _voiceBusy || _awaitingSpeech ? null : toggleMic,
           icon: Icon(recording ? Icons.mic : Icons.mic_none), tooltip: 'Voice'),
+        PopupMenuButton<VoiceLanguage>(
+          tooltip: 'Voice language · ${_voiceLanguage.label}',
+          icon: const Icon(Icons.language),
+          enabled: !recording && !_voiceBusy && !_awaitingSpeech,
+          initialValue: _voiceLanguage,
+          onSelected: (language) => unawaited(_selectVoiceLanguage(language)),
+          itemBuilder: (_) => VoiceLanguage.values.map((language) =>
+              PopupMenuItem(value: language, child: Text(language.label))).toList(),
+        ),
         IconButton(onPressed: () => setState(() => _showCommands = !_showCommands),
           icon: const Icon(Icons.keyboard), tooltip: 'Commands'),
         if (bounds.maxHeight < 345 && _detections.isNotEmpty)
@@ -1292,7 +1402,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
             final typed = command.text.trim();
             if (typed.isEmpty) return;
             FocusScope.of(context).unfocus();
-            setState(() { awaitingVoiceReview = false; output = 'Processing command…'; });
+            setState(() { output = 'Processing command…'; });
             try { await execute(typed); }
             catch (_) { _commandFeedback('Command failed. Please try again.'); }
           }, icon: const Icon(Icons.send_rounded, color: cyan)),
