@@ -921,8 +921,14 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           Expanded(child: TextField(controller: command, minLines: 1, maxLines: 2,
             decoration: const InputDecoration(hintText: 'Command', isDense: true,
               border: OutlineInputBorder()))),
-          IconButton(onPressed: () { setState(() => awaitingVoiceReview = false); execute(command.text); },
-            icon: const Icon(Icons.send)),
+          IconButton(tooltip: 'Send command', onPressed: () async {
+            final typed = command.text.trim();
+            if (typed.isEmpty) return;
+            FocusScope.of(context).unfocus();
+            setState(() { awaitingVoiceReview = false; output = 'Processing command…'; });
+            try { await execute(typed); }
+            catch (_) { if (mounted) setState(() => output = 'Command failed. Please try again.'); }
+          }, icon: const Icon(Icons.send_rounded, color: cyan)),
         ]),
       ),
     ]));
