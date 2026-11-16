@@ -23,13 +23,19 @@ class TestNvrStore extends DeviceStore {
   Future<String?> password(String id) async => 'fixture-pass';
 }
 
-Future<VlcPlayerController> waitForVideo(WidgetTester tester, String path) async {
+Future<VlcPlayerController> waitForVideo(
+  WidgetTester tester, String path, {bool requireSnapshot = true}
+) async {
   for (var attempt = 0; attempt < 75; attempt++) {
     await tester.pump(const Duration(milliseconds: 400));
     final views = find.byType(VlcPlayer).evaluate();
     if (views.isEmpty) continue;
     final controller = (views.single.widget as VlcPlayer).controller;
     if (!controller.value.isInitialized || !controller.value.isPlaying) continue;
+    if (!requireSnapshot && controller.value.position > Duration.zero) {
+      expect(Uri.parse(controller.dataSource).path, path);
+      return controller;
+    }
     final bytes = await controller.takeSnapshot();
     if (bytes.isEmpty) continue;
     final codec = await ui.instantiateImageCodec(bytes, targetWidth: 32);
@@ -55,7 +61,11 @@ Future<VlcPlayerController> waitForVideo(WidgetTester tester, String path) async
       codec.dispose();
     }
   }
-  throw StateError('No authenticated RTSP frames decoded from $path');
+  final views = find.byType(VlcPlayer).evaluate();
+  final value = views.isEmpty ? null : (views.single.widget as VlcPlayer).controller.value;
+  throw StateError('No authenticated RTSP frames decoded from $path '
+      '(initialized: ${value?.isInitialized}, playing: ${value?.isPlaying}, '
+      'position: ${value?.position})');
 }
 
 void main() {
@@ -167,7 +177,9 @@ void main() {
     expect(find.byType(PlaybackDetectionResults), findsOneWidget);
     messenger.setMockMethodCallHandler(sharing, null);
     await tester.tap(find.byTooltip('Resume'));
-    final resumed = await waitForVideo(tester, '/cam/playback');
+    // After replacing the Android texture, require the video-only stream's
+    // media clock to advance. The other test stages sample rendered pixels.
+    final resumed = await waitForVideo(tester, '/cam/playback', requireSnapshot: false);
     expect(Uri.parse(resumed.dataSource).queryParameters['channel'], '1');
     expect(Uri.parse(resumed.dataSource).queryParameters['endtime'], query['endtime']);
 
