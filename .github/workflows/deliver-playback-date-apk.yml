@@ -1,0 +1,30 @@
+name: Publish verified Playback Date Fix APK
+on:
+  push:
+    branches: [delivery/playback-date-apk]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: dbe716e2530e7bfe46808150107c1952f731d0fe
+      BUILD_RUN: '43972494645'
+      RELEASE_TAG: playback-date-fix-dbe716e
+    steps:
+      - name: Download and publish verified build
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/actions/runs/$BUILD_RUN" \
+            | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha and .conclusion == "success"'
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Playback Date Fix" \
+            --notes "Verified ARM64 Android APK from GitHub Actions run $BUILD_RUN."
