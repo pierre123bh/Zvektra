@@ -664,6 +664,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       final analysis = _analysis;
       if (analysis != null && analysis.running) {
         analysis.running = false;
+        analysis.stopClock();
         analysis.status = message;
       }
     });
@@ -767,6 +768,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     String source, {
     required bool softwareDecoding,
     String? alternateLink,
+    bool allowFastAnalysis = true,
   }) {
     final next = VlcPlayerController.network(
       link,
@@ -792,6 +794,22 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       final capture = _snapshotInFlight;
       if (capture != null) await _waitForSnapshot(capture);
       if (!current()) return;
+      final analysis = _analysis;
+      if (started && allowFastAnalysis && analysis != null &&
+          analysis.running && analysis.fastRequested) {
+        analysis.restartAtNormalSpeed();
+        setState(() {
+          _connecting = true;
+          _hasVideo = false;
+          _replacePlayer(null);
+        });
+        await _playerTeardown;
+        if (!_isCurrent(request)) return;
+        _openStream(request, link, port, mode, source,
+            softwareDecoding: softwareDecoding, alternateLink: alternateLink,
+            allowFastAnalysis: false);
+        return;
+      }
       setState(() {
         _connecting = true;
         _hasVideo = false;
@@ -849,9 +867,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           output = '$mode: $source';
         });
         if (_analysis?.running == true) {
-          _analysis!.idle.reset();
-          unawaited(_muteAnalysis(next));
-          _startDetection();
+          final analysis = _analysis!;
+          analysis.idle.reset();
+          analysis.startClock();
+          unawaited(_configureAnalysisSpeed(next, analysis, allowFastAnalysis));
+          _startDetection(onFastStall: allowFastAnalysis ? handleFailure : null);
         } else if (_restoreDetection) {
           _restoreDetection = false;
           _startDetection();
@@ -1045,11 +1065,21 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _detecting = false;
   }
 
-  Future<void> _muteAnalysis(VlcPlayerController active) async {
+  Future<void> _configureAnalysisSpeed(
+    VlcPlayerController active, RecordingAnalysis analysis, bool allowFast,
+  ) async {
     try {
       await active.setVolume(0);
     } on Exception {
       // Some streams do not expose audio controls.
+    }
+    if (!allowFast || !mounted || !identical(player, active) || !analysis.running) return;
+    analysis.fastRequested = true;
+    try {
+      await active.setPlaybackSpeed(8.0);
+    } on Exception {
+      // If the player refuses the rate, keep analyzing at the rate it delivers.
+      analysis.fastRequested = false;
     }
   }
 
@@ -1061,6 +1091,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _portCheck?.cancel();
     setState(() {
       analysis.running = false;
+      analysis.stopClock();
       analysis.status = message;
       _stopDetection();
       _replacePlayer(null);
@@ -1086,7 +1117,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         end: analysis.end, device: device, camera: analysis.camera, keepAnalysis: true);
   }
 
-  void _startDetection() {
+  void _startDetection({Future<void> Function()? onFastStall}) {
     final active = player;
     final start = from;
     if (_connecting || !_hasVideo || active == null || start == null || active.value.isEnded) {
@@ -1100,18 +1131,35 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _detecting = true;
       _detectionError = null;
     });
+    Duration? lastSample;
+    var lastProgress = -1;
     void sample() {
+      if (!mounted || session != _detectionSession || !identical(player, active)) return;
       final analysis = _analysis;
       if (analysis != null && analysis.running) {
+        if (onFastStall != null && analysis.fastRequested &&
+            analysis.idle.elapsed > const Duration(seconds: 5)) {
+          unawaited(onFastStall());
+          return;
+        }
         if (analysis.idle.elapsed > const Duration(seconds: 20)) {
           _finishRecordingAnalysis('Recording stopped advancing. Results are partial.');
           return;
         }
-        setState(() {});
+        final position = analysis.position;
+        if (position.inSeconds != lastProgress) {
+          lastProgress = position.inSeconds;
+          setState(() {});
+        }
+        if (_analyzing || !active.value.isPlaying ||
+            (lastSample != null && position - lastSample! < const Duration(seconds: 1))) return;
+        lastSample = position;
       }
       unawaited(_analyzePlaybackFrame(active, start, camera, session));
     }
-    _detectionTimer = Timer.periodic(const Duration(seconds: 1), (_) => sample());
+    final interval = _analysis?.running == true
+        ? const Duration(milliseconds: 125) : const Duration(seconds: 1);
+    _detectionTimer = Timer.periodic(interval, (_) => sample());
     sample();
   }
 

@@ -225,12 +225,17 @@ void main() {
     expect(analysis.start, DateTime(2024, 11, 15, 15));
     expect(analysis.end, DateTime(2024, 11, 15, 15, 5));
     expect(analysis.camera, 2);
+    for (var attempt = 0; attempt < 30 && analysis.effectiveSpeed == null; attempt++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(analysis.effectiveSpeed, greaterThan(0));
+    debugPrint('Recording analysis fixture speed: ${analysis.effectiveSpeed!.toStringAsFixed(2)}x');
     await tester.tap(find.text('Stop'));
     await tester.pump();
     expect(find.textContaining('Results are partial'), findsOneWidget);
     final event = analysis.events.first.first;
     await tester.tap(find.text(event.kind == PlaybackDetectionKind.person
-        ? 'Person detected' : 'License plate detected').first);
+        ? 'Person detected' : 'Vehicle detected').first);
     final review = await waitForVideo(tester, '/cam/playback', acceptMonochrome: true);
     expect(Uri.parse(review.dataSource).queryParameters['channel'], '2');
     expect(Uri.parse(review.dataSource).queryParameters['endtime'], endsWith('_15_05_00'));

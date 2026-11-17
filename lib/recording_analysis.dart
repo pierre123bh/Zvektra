@@ -28,6 +28,28 @@ class RecordingAnalysis {
 
   Duration position = Duration.zero;
   final idle = Stopwatch()..start();
+  final _scanClock = Stopwatch();
+  Duration _scanStart = Duration.zero;
+  bool fastRequested = false;
+
+  void startClock() {
+    _scanStart = position;
+    _scanClock.start();
+  }
+
+  double? get effectiveSpeed => _scanClock.elapsed < const Duration(seconds: 3)
+      ? null : (position - _scanStart).inMilliseconds / _scanClock.elapsedMilliseconds;
+
+  void stopClock() => _scanClock.stop();
+
+  void restartAtNormalSpeed() {
+    fastRequested = false;
+    position = Duration.zero;
+    _scanClock..stop()..reset();
+    events.clear();
+    _recent.clear();
+    overflow = false;
+  }
   bool running = true;
   bool overflow = false;
   String? status;
@@ -81,6 +103,7 @@ class RecordingAnalysisResults extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final time = DateFormat('HH:mm:ss');
+    final speed = analysis.effectiveSpeed;
     final progress = (analysis.position.inMilliseconds /
         analysis.end.difference(analysis.start).inMilliseconds).clamp(0.0, 1.0).toDouble();
     return Material(
@@ -91,7 +114,8 @@ class RecordingAnalysisResults extends StatelessWidget {
           ListTile(
             title: Text(analysis.running ? 'Analyzing recording' : 'Recording analysis'),
             subtitle: Text('${DateFormat('dd MMM yyyy').format(analysis.start)} '
-                '· Cam ${analysis.camera} · ${time.format(analysis.start)}–${time.format(analysis.end)}'),
+                '· Cam ${analysis.camera} · ${time.format(analysis.start)}–${time.format(analysis.end)}'
+                '${speed == null ? '' : ' · ${speed.toStringAsFixed(1)}×'}'),
             trailing: analysis.running
                 ? TextButton(onPressed: onStop, child: const Text('Stop'))
                 : IconButton(tooltip: 'Close analysis', onPressed: onClose,
@@ -113,7 +137,7 @@ class RecordingAnalysisResults extends StatelessWidget {
                       final first = time.format(detection.timestamp);
                       final last = time.format(event.lastSeen);
                       final label = detection.kind == PlaybackDetectionKind.person
-                          ? 'Person detected' : 'License plate detected';
+                          ? 'Person detected' : 'Vehicle detected';
                       return ListTile(
                         leading: SizedBox(width: 64, height: 44,
                           child: Image.memory(detection.snapshot, fit: BoxFit.contain)),
