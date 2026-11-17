@@ -203,10 +203,17 @@ void main() {
     await tester.pump();
     await tester.enterText(find.byType(TextField),
         'Check camera 2 on November 15 2024 from 3 to 3:05 pm');
-    await tester.tap(find.byTooltip('Send command'));
-    await tester.pump();
-    expect(find.text('Analyzing recording'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 400));
+    final send = find.byTooltip('Send command');
+    expect(send.hitTestable(), findsOneWidget);
+    await tester.tap(send);
     final analysisFinder = find.byType(RecordingAnalysisResults);
+    for (var attempt = 0; attempt < 25 && analysisFinder.evaluate().isEmpty; attempt++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(analysisFinder, findsOneWidget, reason: tester.widgetList<Text>(find.byType(Text))
+        .map((text) => text.data).whereType<String>().join(' | '));
+    expect(find.text('Analyzing recording'), findsOneWidget);
     for (var attempt = 0; attempt < 90; attempt++) {
       await tester.pump(const Duration(milliseconds: 400));
       final timeline = tester.widget<RecordingAnalysisResults>(analysisFinder).analysis;
