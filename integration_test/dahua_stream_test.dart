@@ -237,7 +237,13 @@ void main() {
     await tester.tap(find.text('Stop'));
     await tester.pump();
     expect(find.textContaining('Results are partial'), findsOneWidget);
-    await tester.tap(find.text('Save clip').first);
+    final saveClip = find.ancestor(of: find.text('Save clip').first,
+        matching: find.byWidgetPredicate((widget) => widget is TextButton)).first;
+    await tester.ensureVisible(saveClip);
+    await tester.pump(const Duration(milliseconds: 300));
+    final exportButton = tester.widget<TextButton>(saveClip);
+    expect(exportButton.onPressed, isNotNull);
+    exportButton.onPressed!();
     final clipSaved = find.text('Video clip saved to your gallery.');
     for (var attempt = 0; attempt < 105 && clipSaved.evaluate().isEmpty; attempt++) {
       await tester.pump(const Duration(milliseconds: 400));
