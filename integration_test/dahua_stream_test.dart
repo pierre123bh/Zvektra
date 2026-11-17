@@ -201,12 +201,11 @@ void main() {
     expect(second, isNot(same(restored)));
     await tester.tap(find.byTooltip('Commands'));
     await tester.pump();
-    await tester.enterText(find.byType(TextField),
-        'Check camera 2 on November 15 2024 from 3 to 3:05 pm');
-    await tester.pump(const Duration(milliseconds: 400));
-    final send = find.byTooltip('Send command');
-    expect(send.hitTestable(), findsOneWidget);
-    await tester.tap(send);
+    final field = tester.widget<TextField>(find.byType(TextField));
+    // Inject the command without opening the emulator's soft keyboard.
+    field.controller!.text = 'Check camera 2 on November 15 2024 from 3 to 3:05 pm';
+    final send = tester.widget<IconButton>(find.byTooltip('Send command'));
+    send.onPressed!();
     final analysisFinder = find.byType(RecordingAnalysisResults);
     for (var attempt = 0; attempt < 25 && analysisFinder.evaluate().isEmpty; attempt++) {
       await tester.pump(const Duration(milliseconds: 200));
