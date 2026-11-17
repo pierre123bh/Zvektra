@@ -1,0 +1,35 @@
+name: Publish verified Today’s Playback Date APK
+on:
+  push:
+    branches: [delivery/today-playback-7628264]
+    paths: [.github/workflows/deliver-today-playback-apk.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: 7628264964ceebc2a9cceb05b2972576da5802dc
+      BUILD_RUN: '44152404357'
+      SMOKE_RUN: '44152404454'
+      RELEASE_TAG: today-playback-7628264
+    steps:
+      - name: Verify Android checks and publish the APK
+        run: |
+          set -euo pipefail
+          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
+            gh api "repos/$GH_REPO/actions/runs/$run" \
+              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
+            gh run watch "$run" --exit-status --interval 15
+          done
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Today’s Playback Date" \
+            --notes "ARM64 Android APK from a verified build. Defaults playback to the phone’s current local date."
