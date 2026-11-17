@@ -1,0 +1,35 @@
+name: Publish verified Fast Recording Analysis APK
+on:
+  push:
+    branches: [delivery/fast-analysis-bcd78f0]
+    paths: [.github/workflows/deliver-fast-analysis-apk.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: bcd78f094225345d4607fcdee04d24e41e7c6a6a
+      BUILD_RUN: '44127374064'
+      SMOKE_RUN: '44127374132'
+      RELEASE_TAG: fast-analysis-bcd78f0
+    steps:
+      - name: Verify Android checks and publish the APK
+        run: |
+          set -euo pipefail
+          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
+            gh api "repos/$GH_REPO/actions/runs/$run" \
+              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
+            gh run watch "$run" --exit-status --interval 15
+          done
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Fast Recording Analysis" \
+            --notes "ARM64 Android APK from a verified build. Requests 8x recording analysis and labels vehicle detections."
