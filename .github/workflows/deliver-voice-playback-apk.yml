@@ -1,0 +1,35 @@
+name: Publish verified Voice Playback Fix APK
+on:
+  push:
+    branches: [delivery/voice-playback-d2b04b8]
+    paths: [.github/workflows/deliver-voice-playback-apk.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: d2b04b8c9f412c585eec22f17f0a5dc621925082
+      BUILD_RUN: '43991687383'
+      SMOKE_RUN: '43991687370'
+      RELEASE_TAG: voice-playback-d2b04b8
+    steps:
+      - name: Verify Android checks and publish the APK
+        run: |
+          set -euo pipefail
+          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
+            gh api "repos/$GH_REPO/actions/runs/$run" \
+              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
+            gh run watch "$run" --exit-status --interval 15
+          done
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Voice Playback Fix" \
+            --notes "ARM64 Android APK from a verified build. Improves spoken playback transcription handling."
