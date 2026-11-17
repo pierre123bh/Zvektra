@@ -1,7 +1,6 @@
 package net.zvektra.zvektra
 
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -38,8 +37,8 @@ class AndroidSpeechVoice(
             when (call.method) {
                 "speak" -> {
                     val text = call.argument<String>("text")
-                    val locale = call.argument<String>("locale")
-                    if (text == null || locale == null) result.success(false)
+                    val locale = "en-US"
+                    if (text == null) result.success(false)
                     else speak(text, locale, result)
                 }
                 "start" -> {
@@ -59,7 +58,7 @@ class AndroidSpeechVoice(
                                     if (recognizer === session) this@AndroidSpeechVoice.onError(error)
                                 }
                             })
-                            val locale = call.argument<String>("locale") ?: "en-US"
+                            val locale = "en-US"
                             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -68,16 +67,6 @@ class AndroidSpeechVoice(
                                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
                                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 4)
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
-                                if (Build.VERSION.SDK_INT >= 34) {
-                                    putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true)
-                                    val languages = arrayListOf("en-US", "ar-LB", "ar-SA")
-                                    putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH,
-                                        RecognizerIntent.LANGUAGE_SWITCH_BALANCED)
-                                    putStringArrayListExtra(
-                                        RecognizerIntent.EXTRA_LANGUAGE_DETECTION_ALLOWED_LANGUAGES, languages)
-                                    putStringArrayListExtra(
-                                        RecognizerIntent.EXTRA_LANGUAGE_SWITCH_ALLOWED_LANGUAGES, languages)
-                                }
                             }
                             listening = true
                             recognizer?.startListening(intent)
@@ -141,8 +130,7 @@ class AndroidSpeechVoice(
         val speech = pendingSpeech ?: return
         try {
             val locale = Locale.forLanguageTag(speech.locale)
-            val available = engine.setLanguage(locale) >= TextToSpeech.LANG_AVAILABLE ||
-                (locale.language == "ar" && engine.setLanguage(Locale("ar")) >= TextToSpeech.LANG_AVAILABLE)
+            val available = engine.setLanguage(locale) >= TextToSpeech.LANG_AVAILABLE
             if (!available || engine.speak(speech.text, TextToSpeech.QUEUE_FLUSH, null, speech.id)
                 != TextToSpeech.SUCCESS) finishSpeaking(speech.id, false)
         } catch (_: Exception) {

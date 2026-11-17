@@ -2,18 +2,6 @@ import 'package:intl/intl.dart';
 
 import 'recording_analysis.dart';
 
-enum VoiceLanguage {
-  lebanese('ar-LB', 'Lebanese Arabic'),
-  english('en-US', 'English');
-
-  const VoiceLanguage(this.locale, this.label);
-  final String locale;
-  final String label;
-
-  String say(String english, String arabic) =>
-      this == VoiceLanguage.lebanese ? arabic : english;
-}
-
 typedef CameraVoiceCommand = ({int camera, DateTime? start, DateTime? end});
 
 const _numbers = {

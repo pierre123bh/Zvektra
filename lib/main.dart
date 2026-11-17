@@ -377,7 +377,6 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(_loadVoiceLanguage());
     _speech.setMethodCallHandler((call) async {
       if (!mounted || !(recording || _voiceBusy || _awaitingSpeech)) return;
       if (call.method != 'recognized' && call.method != 'speechError') return;
@@ -397,57 +396,27 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     });
   }
 
-  static const _voiceLanguageKey = 'voice_language';
-  VoiceLanguage _voiceLanguage = VoiceLanguage.lebanese;
-  bool _voiceLanguageChosen = false;
-
-  Future<void> _loadVoiceLanguage() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (mounted && !_voiceLanguageChosen &&
-          prefs.getString(_voiceLanguageKey) == VoiceLanguage.english.locale) {
-        setState(() => _voiceLanguage = VoiceLanguage.english);
-      }
-    } on Exception {
-      // The current selection remains usable without preferences.
-    }
-  }
-
-  Future<void> _selectVoiceLanguage(VoiceLanguage language) async {
-    setState(() {
-      _voiceLanguageChosen = true;
-      _voiceLanguage = language;
-    });
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_voiceLanguageKey, language.locale);
-    } on Exception {
-      // Keep the selection for this screen even if persistence fails.
-    }
-  }
+  static const _voiceLocale = 'en-US';
 
   Future<bool> _speak(String message) async {
     try {
       return await _speech.invokeMethod<bool>('speak', {
         'text': message,
-        'locale': _voiceLanguage.locale,
+        'locale': _voiceLocale,
       }) ?? false;
     } on Exception {
       return false;
     }
   }
 
-  Future<void> _voiceFeedback(String english, String arabic, {String heard = ''}) async {
+  Future<void> _voiceFeedback(String message, {String heard = ''}) async {
     if (!mounted) return;
-    final message = _voiceLanguage.say(english, arabic);
-    final label = _voiceLanguage.say('Heard', 'سمعت');
-    _commandFeedback(heard.isEmpty ? message : '$label: “$heard”\n$message');
+    _commandFeedback(heard.isEmpty ? message : 'Heard: “$heard”\n$message');
     await _speak(message);
   }
 
   Future<void> _askToRepeat({String heard = ''}) => _voiceFeedback(
       'Please repeat. Say live for live video, or give the camera, date and time range.',
-      'عيد الطلب لو سمحت. قلّي مباشر، أو للتسجيل قلّي رقم الكاميرا والتاريخ والوقت.',
       heard: heard);
 
   Future<void> _handleVoiceCommand(
@@ -486,11 +455,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     }
     final device = selected;
     if (device == null) {
-      await _voiceFeedback('Select a device first.', 'اختار جهاز بالأول.');
+      await _voiceFeedback('Select a device first.');
       return;
     }
     if (parsed.range.camera > device.maxChannels) {
-      await _voiceFeedback('Please give a valid camera number.', 'قلّي رقم كاميرا موجودة عالجهاز.');
+      await _voiceFeedback('Please give a valid camera number.');
       return;
     }
     await _playVoiceRange(device, parsed.range, parsed.filter);
@@ -513,13 +482,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         device: device, camera: parsed.camera, start: start, end: end, analysisFilter: analysisFilter,
       );
       unawaited(start == null
-          ? _voiceFeedback('Opening camera ${parsed.camera} live.', 'عم افتح الكاميرا ${parsed.camera} مباشر.')
+          ? _voiceFeedback('Opening camera ${parsed.camera} live.')
           : analysisFilter != null
-              ? _voiceFeedback('Analyzing camera ${parsed.camera}.', 'عم حلّل تسجيل الكاميرا ${parsed.camera}.')
-              : _voiceFeedback('Opening camera ${parsed.camera} playback.', 'عم افتح تسجيل الكاميرا ${parsed.camera}.'));
+              ? _voiceFeedback('Analyzing camera ${parsed.camera}.')
+              : _voiceFeedback('Opening camera ${parsed.camera} playback.'));
       await connection;
     } on Exception {
-      await _voiceFeedback('Could not open the camera.', 'ما قدرت افتح الكاميرا.');
+      await _voiceFeedback('Could not open the camera.');
     }
   }
 
@@ -1354,11 +1323,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           setState(() => output = 'Allow microphone access to record a command.');
           return;
         }
-        final prompt = _voiceLanguage.say('What would you like to see?', 'شو بدّك فرجيك؟');
+        const prompt = 'What would you like to see?';
         final spoken = await _speak(prompt);
         if (!current()) return;
         if (!spoken) _commandFeedback(prompt);
-        await _speech.invokeMethod<void>('start', {'locale': _voiceLanguage.locale});
+        await _speech.invokeMethod<void>('start', {'locale': _voiceLocale});
         if (!current()) return;
         setState(() {
           recording = true;
@@ -1379,7 +1348,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         if (ending) {
           await _askToRepeat();
         } else {
-          await _voiceFeedback('Could not start voice recognition.', 'ما قدرت شغّل التعرّف عالصوت.');
+          await _voiceFeedback('Could not start voice recognition.');
         }
       }
     } finally {
@@ -1513,22 +1482,6 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
                 width: width, label: recording ? 'Listening' : 'Voice',
                 icon: recording ? Icons.mic : Icons.mic_none, tooltip: 'Voice',
                 onPressed: _voiceBusy || _awaitingSpeech ? null : toggleMic,
-              ),
-              SizedBox(
-                width: width,
-                child: PopupMenuButton<VoiceLanguage>(
-                  tooltip: 'Voice language · ${_voiceLanguage.label}',
-                  enabled: !recording && !_voiceBusy && !_awaitingSpeech,
-                  initialValue: _voiceLanguage,
-                  onSelected: (language) => unawaited(_selectVoiceLanguage(language)),
-                  itemBuilder: (_) => VoiceLanguage.values.map((language) =>
-                      PopupMenuItem(value: language, child: Text(language.label))).toList(),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(12)),
-                    child: const SizedBox(height: 54,
-                      child: _PlaybackActionLabel(icon: Icons.language, label: 'Language')),
-                  ),
-                ),
               ),
               _PlaybackAction(
                 width: width, label: 'Commands', icon: Icons.keyboard,

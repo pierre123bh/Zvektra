@@ -27,8 +27,8 @@ void main() {
   const permission = MethodChannel('flutter.baseflow.com/permissions/methods');
   const codec = StandardMethodCodec();
 
-  testWidgets('prompts, listens and acts in the selected language', (tester) async {
-    SharedPreferences.setMockInitialValues({});
+  testWidgets('uses English even with an old Arabic preference', (tester) async {
+    SharedPreferences.setMockInitialValues({'voice_language': 'ar-LB'});
     final messenger = tester.binding.defaultBinaryMessenger;
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(voice, (call) async {
@@ -57,17 +57,14 @@ void main() {
     await tester.tap(find.byTooltip('Voice'));
     await tester.pump();
     expect(calls.map((call) => call.method), ['speak', 'start']);
-    expect(calls.first.arguments, {'text': 'شو بدّك فرجيك؟', 'locale': 'ar-LB'});
-    expect(calls.last.arguments, {'locale': 'ar-LB'});
-    await recognized('فرجيني كاميرا تنين مباشر', 0.95);
+    expect(calls.first.arguments, {'text': 'What would you like to see?', 'locale': 'en-US'});
+    expect(calls.last.arguments, {'locale': 'en-US'});
+    await recognized('show camera two live', 0.95);
     expect(find.text('Cam 2'), findsOneWidget);
     expect(store.connectionAttempts, 1);
-    expect(calls.last.arguments['locale'], 'ar-LB');
+    expect(calls.last.arguments['locale'], 'en-US');
 
-    await tester.tap(find.byTooltip('Voice language · Lebanese Arabic'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('English'));
-    await tester.pumpAndSettle();
+    expect(find.text('Language'), findsNothing);
     await tester.tap(find.byTooltip('Voice'));
     await tester.pump();
     expect(calls.last.arguments, {'locale': 'en-US'});
