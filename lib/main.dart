@@ -757,6 +757,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _ => null,
     };
     final analysis = _analysis;
+    final recordingPassword = password;
     if (analysisFilter != null && analysis != null &&
         parallelRecordingRanges(analysis.start, analysis.end).length > 1) {
       setState(() {
@@ -765,7 +766,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           key: ObjectKey(analysis),
           analysis: analysis,
           source: (from, to) => StreamBuilderService.url(
-            target, cameraNumber, start: from, end: to, password: password,
+            target, cameraNumber, start: from, end: to, password: recordingPassword,
           )!,
           onUpdate: () {
             if (_isCurrent(request)) setState(() {});
