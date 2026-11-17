@@ -1,0 +1,35 @@
+name: Publish verified Parallel Recording Analysis APK
+on:
+  push:
+    branches: [delivery/parallel-analysis-332a14d]
+    paths: [.github/workflows/deliver-parallel-analysis-apk.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: bcd78f094225345d4607fcdee04d24e41e7c6a6a
+      BUILD_RUN: '44132962062'
+      SMOKE_RUN: '44132962086'
+      RELEASE_TAG: parallel-analysis-332a14d
+    steps:
+      - name: Verify Android checks and publish the APK
+        run: |
+          set -euo pipefail
+          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
+            gh api "repos/$GH_REPO/actions/runs/$run" \
+              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
+            gh run watch "$run" --exit-status --interval 15
+          done
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Parallel Recording Analysis" \
+            --notes "ARM64 Android APK from a verified build. Runs up to eight parallel time-range recording requests."
