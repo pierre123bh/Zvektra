@@ -32,6 +32,15 @@ class RecordingAnalysis {
   bool overflow = false;
   String? status;
 
+  ({DateTime start, DateTime end}) clipRange(DateTime moment) {
+    final second = DateTime.fromMillisecondsSinceEpoch(
+        moment.millisecondsSinceEpoch ~/ 1000 * 1000, isUtc: moment.isUtc);
+    final before = second.subtract(const Duration(seconds: 5));
+    final after = second.add(const Duration(seconds: 10));
+    return (start: before.isBefore(start) ? start : before,
+        end: after.isAfter(end) ? end : after);
+  }
+
   void advance(Duration next) {
     if (next <= position) return;
     position = next;
@@ -71,12 +80,14 @@ class RecordingAnalysisResults extends StatelessWidget {
     required this.onStop,
     required this.onClose,
     required this.onOpen,
+    this.onSaveClip,
   });
 
   final RecordingAnalysis analysis;
   final VoidCallback onStop;
   final VoidCallback onClose;
   final ValueChanged<DateTime> onOpen;
+  final ValueChanged<DateTime>? onSaveClip;
 
   @override
   Widget build(BuildContext context) {
@@ -119,7 +130,11 @@ class RecordingAnalysisResults extends StatelessWidget {
                           child: Image.memory(detection.snapshot, fit: BoxFit.contain)),
                         title: Text(label),
                         subtitle: Text(first == last ? first : '$first–$last'),
-                        trailing: const Icon(Icons.play_arrow),
+                        trailing: TextButton.icon(
+                          onPressed: onSaveClip == null ? null : () => onSaveClip!(detection.timestamp),
+                          icon: const Icon(Icons.video_file_outlined, size: 18),
+                          label: const Text('Save clip'),
+                        ),
                         onTap: () => onOpen(detection.timestamp),
                       );
                     },

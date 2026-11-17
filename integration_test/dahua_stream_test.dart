@@ -237,6 +237,13 @@ void main() {
     await tester.tap(find.text('Stop'));
     await tester.pump();
     expect(find.textContaining('Results are partial'), findsOneWidget);
+    await tester.tap(find.text('Save clip').first);
+    final clipSaved = find.text('Video clip saved to your gallery.');
+    for (var attempt = 0; attempt < 105 && clipSaved.evaluate().isEmpty; attempt++) {
+      await tester.pump(const Duration(milliseconds: 400));
+      if (find.text('Could not save the video clip. Try again.').evaluate().isNotEmpty) break;
+    }
+    expect(clipSaved, findsOneWidget, reason: 'Export the RTSP interval as a playable MP4 in MediaStore');
     final event = analysis.events.first.first;
     await tester.tap(find.text(event.kind == PlaybackDetectionKind.person
         ? 'Person detected' : 'Vehicle detected').first);

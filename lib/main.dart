@@ -1040,6 +1040,62 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     });
   }
 
+  bool _savingClip = false;
+
+  Future<void> _saveRecordingClip(RecordingAnalysis analysis, DateTime moment) async {
+    if (_savingClip) return;
+    final device = widget.store.devices.where((item) => item.id == analysis.deviceId).firstOrNull;
+    if (device == null) {
+      _commandFeedback('The device for this recording is unavailable.');
+      return;
+    }
+    final range = analysis.clipRange(moment);
+    final seconds = range.end.difference(range.start).inSeconds;
+    if (seconds < 1) {
+      _commandFeedback('This event is too close to the end of the recording.');
+      return;
+    }
+    setState(() => _savingClip = true);
+    try {
+      const gallery = MethodChannel('net.zvektra/snapshot_gallery');
+      final needsPermission = await gallery.invokeMethod<bool>('requiresStoragePermission');
+      if (!mounted) return;
+      if (needsPermission == true) {
+        final permission = await Permission.storage.request();
+        if (!mounted) return;
+        if (!permission.isGranted) {
+          _commandFeedback('Allow storage access to save videos to your gallery.');
+          return;
+        }
+      }
+      final password = await widget.store.password(device.id);
+      if (!mounted) return;
+      if (password == null || password.isEmpty) {
+        _commandFeedback('Edit the device and enter its password.');
+        return;
+      }
+      Future<void> export({required bool fallback}) async {
+        final source = StreamBuilderService.url(device, analysis.camera,
+            start: range.start, end: range.end, password: password, topcamFallback: fallback);
+        if (source == null) throw const FormatException('Recording export unavailable');
+        const clips = MethodChannel('net.zvektra/clip_gallery');
+        await clips.invokeMethod<void>('save', {'source': source, 'seconds': seconds});
+      }
+      _commandFeedback('Saving video clip…');
+      try {
+        await export(fallback: false);
+      } on PlatformException {
+        if (device.manufacturer != 'Topcam' || !mounted) rethrow;
+        await export(fallback: true);
+      }
+      _commandFeedback('Video clip saved to your gallery.');
+    } on Exception {
+      _commandFeedback('Could not save the video clip. Try again.');
+    } finally {
+      if (mounted) setState(() => _savingClip = false);
+    }
+  }
+
   Future<void> _openRecordingEvent(RecordingAnalysis analysis, DateTime moment) async {
     final device = widget.store.devices.where((device) => device.id == analysis.deviceId).firstOrNull;
     if (device == null) {
@@ -1527,6 +1583,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
               onStop: () => _finishRecordingAnalysis('Analysis stopped. Results are partial.'),
               onClose: () => setState(() => _showAnalysis = false),
               onOpen: (moment) => unawaited(_openRecordingEvent(analysis, moment)),
+              onSaveClip: _savingClip ? null : (moment) => unawaited(_saveRecordingClip(analysis, moment)),
             ),
         ]),
       )),
