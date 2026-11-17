@@ -64,6 +64,8 @@ class AndroidSpeechVoice(
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                                // Playback commands often include pauses between the camera, date and time.
+                                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
                                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
                                 if (Build.VERSION.SDK_INT >= 34) {

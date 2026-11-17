@@ -58,7 +58,7 @@ void main() {
     expect(calls.map((call) => call.method), ['speak', 'start']);
     expect(calls.first.arguments, {'text': 'شو بدّك فرجيك؟', 'locale': 'ar-LB'});
     expect(calls.last.arguments, {'locale': 'ar-LB'});
-    await recognized('فرجيني كاميرا تنين', 0.95);
+    await recognized('فرجيني كاميرا تنين مباشر', 0.95);
     expect(find.text('Cam 2'), findsOneWidget);
     expect(store.connectionAttempts, 1);
     expect(calls.last.arguments['locale'], 'ar-LB');
@@ -70,9 +70,15 @@ void main() {
     await tester.tap(find.byTooltip('Voice'));
     await tester.pump();
     expect(calls.last.arguments, {'locale': 'en-US'});
-    await recognized('show camera three', 0.2);
+    await recognized('show camera three live', 0.2);
     expect(store.connectionAttempts, 1);
     expect(calls.last.arguments['text'], startsWith('Please repeat'));
+
+    await tester.tap(find.byTooltip('Voice'));
+    await tester.pump();
+    await recognized('camera three', 0.95);
+    expect(store.connectionAttempts, 1);
+    expect(calls.last.arguments['text'], contains('Say live'));
 
     await tester.tap(find.byTooltip('Voice'));
     await tester.pump();

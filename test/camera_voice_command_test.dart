@@ -6,8 +6,8 @@ void main() {
   CameraVoiceCommand? parse(String command) => parseCameraVoiceCommand(command, now);
 
   test('recognizes English, Lebanese and mixed live commands', () {
-    for (final command in ['Show me camera two live', 'فرجيني كاميرا رقم تنين',
-      'fergini kamera رقم اثنين', 'open cam2']) {
+    for (final command in ['Show me camera two live', 'فرجيني كاميرا رقم تنين مباشر',
+      'fergini kamera رقم اثنين live', 'open live cam2']) {
       expect(parse(command), (camera: 2, start: null, end: null), reason: command);
     }
   });
@@ -21,6 +21,14 @@ void main() {
     expect(parse('فرجيني playback cam2 بتاريخ 2026-11-15 من 12 للـ 12 وستة بعد الضهر'), expected);
   });
 
+  test('accepts compact spoken times and dates without a year', () {
+    expect(parse('camera 2 November 15 from 12pm to 1210 pm'),
+        (camera: 2, start: DateTime(2026, 11, 15, 12),
+          end: DateTime(2026, 11, 15, 12, 10)));
+    expect(parse('camera 2 November 15th from 12pm to 12:10 pm'),
+        parse('camera 2 November 15 from 12pm to 1210 pm'));
+  });
+
   test('interprets Lebanese time and mixed commands', () {
     final expected = (camera: 2, start: DateTime(2026, 11, 16, 12),
       end: DateTime(2026, 11, 16, 12, 5));
@@ -31,7 +39,7 @@ void main() {
 
   test('asks for clarification instead of starting with incomplete or invalid details', () {
     for (final command in ['playback cam2 from 12 pm to 12:05 pm',
-      'show me camera', 'cancel camera two', 'playback cam2 yesterday from 12 pm',
+      'camera 2', 'show camera 2', 'show me camera', 'cancel camera two', 'playback cam2 yesterday from 12 pm',
       'playback cam2 tomorrow from 12 pm to 12:05 pm', 'playback cam2 31 February 2026 from 12 to 13',
       'playback cam2 today from 18 to 19', 'show camera two or three']) {
       expect(parse(command), isNull, reason: command);

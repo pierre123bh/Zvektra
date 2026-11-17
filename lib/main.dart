@@ -442,8 +442,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   }
 
   Future<void> _askToRepeat() => _voiceFeedback(
-      'Please repeat. For playback, give the camera, date, start time and end time.',
-      'عيد الطلب لو سمحت. للتسجيل، قلّي رقم الكاميرا والتاريخ ووقت البداية والنهاية.');
+      'Please repeat. Say live for live video, or give the camera, date and time range.',
+      'عيد الطلب لو سمحت. قلّي مباشر، أو للتسجيل قلّي رقم الكاميرا والتاريخ والوقت.');
 
   Future<void> _handleVoiceCommand(String transcript, num? confidence) async {
     if (confidence != null && confidence >= 0 && confidence < 0.6) {
@@ -1218,7 +1218,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           recording = true;
           output = 'Listening… tap the microphone to finish.';
         });
-        _recordingLimit = Timer(const Duration(seconds: 10), () {
+        _recordingLimit = Timer(const Duration(seconds: 18), () {
           if (mounted && recording) unawaited(toggleMic());
         });
       }
