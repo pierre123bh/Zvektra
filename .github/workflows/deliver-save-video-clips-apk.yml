@@ -1,0 +1,35 @@
+name: Publish verified Save Video Clips APK
+on:
+  push:
+    branches: [delivery/save-video-clips-5eedc4d]
+    paths: [.github/workflows/deliver-save-video-clips-apk.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: 5eedc4d83b26bcdf977600acc60d6dfe69a20751
+      BUILD_RUN: '44157850124'
+      SMOKE_RUN: '44157850013'
+      RELEASE_TAG: save-video-clips-5eedc4d
+    steps:
+      - name: Verify Android checks and publish the APK
+        run: |
+          set -euo pipefail
+          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
+            gh api "repos/$GH_REPO/actions/runs/$run" \
+              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
+            gh run watch "$run" --exit-status --interval 15
+          done
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Save Video Clips" \
+            --notes "ARM64 Android APK from a verified build. Saves short event clips to the Android gallery."
