@@ -1,0 +1,35 @@
+name: Publish verified Default-Speed Recording Analysis APK
+on:
+  push:
+    branches: [delivery/default-analysis-fbf62d0]
+    paths: [.github/workflows/deliver-default-analysis-apk.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: fbf62d0b238e29c4ca7daf5dc0a409785d0e3572
+      BUILD_RUN: '44138375608'
+      SMOKE_RUN: '44138375348'
+      RELEASE_TAG: default-analysis-fbf62d0
+    steps:
+      - name: Verify Android checks and publish the APK
+        run: |
+          set -euo pipefail
+          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
+            gh api "repos/$GH_REPO/actions/runs/$run" \
+              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
+            gh run watch "$run" --exit-status --interval 15
+          done
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Default-Speed Recording Analysis" \
+            --notes "ARM64 Android APK from a verified build. Restores single-stream recording analysis at default speed."
