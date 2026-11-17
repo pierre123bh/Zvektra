@@ -1202,7 +1202,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     final match=RegExp(r'(?:camera|channel|cam)\s*(\d+)').firstMatch(text);
     if(match!=null){final c=int.tryParse(match.group(1)!);if(c!=null&&selected!=null&&c<=selected!.maxChannels&&c>0)channel=c;else{_commandFeedback('Camera number is outside the configured channel range.');return;}}
     if (RegExp(r'\bstop (counting|detection|detecting)\b').hasMatch(text)) {
-      setState(_stopDetection);
+      if (_analysis?.running == true) {
+        _finishRecordingAnalysis('Analysis stopped. Results are partial.');
+      } else {
+        setState(_stopDetection);
+      }
       return;
     }
     if (RegExp(r'\b(count|detect|snapshot)\b').hasMatch(text)) {
