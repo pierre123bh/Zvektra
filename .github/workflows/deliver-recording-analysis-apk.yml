@@ -1,0 +1,35 @@
+name: Publish verified Recording Analysis APK
+on:
+  push:
+    branches: [delivery/recording-analysis-007fc5f]
+    paths: [.github/workflows/deliver-recording-analysis-apk.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: 007fc5fc29d8b6fb06c958e2bd4d07eac55a479f
+      BUILD_RUN: '44110095450'
+      SMOKE_RUN: '44110095644'
+      RELEASE_TAG: recording-analysis-007fc5f
+    steps:
+      - name: Verify Android checks and publish the APK
+        run: |
+          set -euo pipefail
+          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
+            gh api "repos/$GH_REPO/actions/runs/$run" \
+              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
+            gh run watch "$run" --exit-status --interval 15
+          done
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Recording Analysis" \
+            --notes "ARM64 Android APK from a verified build. Groups recording detections into a timeline with snapshots and event playback."
