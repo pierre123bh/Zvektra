@@ -250,9 +250,8 @@ void main() {
     exportButton.onPressed!();
     await tester.pump();
     expect(find.text('Saving…'), findsOneWidget);
-    expect(tester.widgetList<TextButton>(find.ancestor(of: find.text('Save clip'),
-        matching: find.byWidgetPredicate((widget) => widget is TextButton)))
-        .any((button) => button.onPressed != null), isTrue);
+    expect(tester.widget<RecordingAnalysisResults>(analysisFinder).savingClips,
+        hasLength(1));
     final clipSaved = find.textContaining('saved to your gallery.');
     for (var attempt = 0; attempt < 105 && clipSaved.evaluate().isEmpty; attempt++) {
       await tester.pump(const Duration(milliseconds: 400));
