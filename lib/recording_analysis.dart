@@ -8,7 +8,7 @@ enum RecordingAnalysisFilter { all, people, vehicles }
 class RecordingEvent {
   RecordingEvent(this.first) : lastSeen = first.timestamp;
 
-  final PlaybackDetection first;
+  PlaybackDetection first;
   DateTime lastSeen;
 }
 
@@ -22,7 +22,6 @@ class RecordingAnalysis {
   final String deviceId;
   final int camera;
   final events = <RecordingEvent>[];
-  final _recent = <PlaybackDetectionKind, RecordingEvent>{};
   static const _eventLimit = 200;
   static const _joinGap = Duration(seconds: 3);
 
@@ -47,7 +46,6 @@ class RecordingAnalysis {
     position = Duration.zero;
     _scanClock..stop()..reset();
     events.clear();
-    _recent.clear();
     overflow = false;
   }
   bool running = true;
@@ -67,22 +65,30 @@ class RecordingAnalysis {
         (filter == RecordingAnalysisFilter.vehicles && kind != PlaybackDetectionKind.licensePlate)) {
       return;
     }
-    final previous = _recent[kind];
-    if (previous != null) {
-      final gap = detection.timestamp.difference(previous.lastSeen);
-      if (gap.isNegative) return;
-      if (gap <= _joinGap) {
-        previous.lastSeen = detection.timestamp;
-        return;
+    RecordingEvent? match;
+    for (var index = events.length - 1; index >= 0; index--) {
+      final event = events[index];
+      if (event.first.kind != kind ||
+          detection.timestamp.difference(event.lastSeen) > _joinGap ||
+          event.first.timestamp.difference(detection.timestamp) > _joinGap) continue;
+      if (match == null) {
+        match = event;
+      } else {
+        if (event.first.timestamp.isBefore(match.first.timestamp)) match.first = event.first;
+        if (event.lastSeen.isAfter(match.lastSeen)) match.lastSeen = event.lastSeen;
+        events.removeAt(index);
       }
     }
-    if (events.length >= _eventLimit) {
+    if (match != null) {
+      if (detection.timestamp.isBefore(match.first.timestamp)) match.first = detection;
+      if (detection.timestamp.isAfter(match.lastSeen)) match.lastSeen = detection.timestamp;
+    } else if (events.length < _eventLimit) {
+      events.add(RecordingEvent(detection));
+    } else {
       overflow = true;
       return;
     }
-    final event = RecordingEvent(detection);
-    _recent[kind] = event;
-    events.add(event);
+    events.sort((a, b) => a.first.timestamp.compareTo(b.first.timestamp));
   }
 }
 

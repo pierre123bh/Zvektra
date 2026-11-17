@@ -3,6 +3,7 @@ import 'camera_voice_command.dart';
 import 'multi_camera.dart';
 import 'playback_detection_results.dart';
 import 'recording_analysis.dart';
+import 'parallel_recording_scan.dart';
 import 'zvektra_theme.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -572,6 +573,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   static const _snapshotLimit = 200;
   RecordingAnalysis? _analysis;
   bool _showAnalysis = false;
+  ParallelRecordingScan? _parallelScan;
   final _detections = <PlaybackDetection>[];
   Timer? _detectionTimer;
   int _detectionSession = 0;
@@ -701,6 +703,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (!_isCurrent(request)) return;
     setState(() {
       _replacePlayer(null);
+      _parallelScan = null;
       if (!restore) {
         _detections.clear();
         _peopleCount = 0;
@@ -753,6 +756,41 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           target, cameraNumber, password: password, mainStream: true),
       _ => null,
     };
+    final analysis = _analysis;
+    if (analysisFilter != null && analysis != null &&
+        parallelRecordingRanges(analysis.start, analysis.end).length > 1) {
+      setState(() {
+        _connecting = false;
+        _parallelScan = ParallelRecordingScan(
+          key: ObjectKey(analysis),
+          analysis: analysis,
+          source: (from, to) => StreamBuilderService.url(
+            target, cameraNumber, start: from, end: to, password: password,
+          )!,
+          onUpdate: () {
+            if (_isCurrent(request)) setState(() {});
+          },
+          onFinished: () {
+            if (_isCurrent(request)) _finishRecordingAnalysis();
+          },
+          onUnavailable: () {
+            if (!_isCurrent(request)) return;
+            analysis.restartAtNormalSpeed();
+            setState(() {
+              _parallelScan = null;
+              _connecting = true;
+            });
+            unawaited(WidgetsBinding.instance.endOfFrame.then((_) {
+              if (_isCurrent(request)) {
+                _openStream(request, link, port, mode, source,
+                    softwareDecoding: false, alternateLink: alternateLink);
+              }
+            }));
+          },
+        );
+      });
+      return;
+    }
     _openStream(
       request, link, port, mode, source,
       // A resumed recording may have lost its hardware decoding surface.
@@ -1093,6 +1131,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       analysis.running = false;
       analysis.stopClock();
       analysis.status = message;
+      _parallelScan = null;
       _stopDetection();
       _replacePlayer(null);
       _hasVideo = false;
@@ -1586,7 +1625,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(16), border: Border.all(color: panelBorder)),
         child: Stack(fit: StackFit.expand, children: [
-          _videoPanel(),
+          _parallelScan ?? _videoPanel(),
           if (_showAnalysis && analysis != null)
             RecordingAnalysisResults(
               analysis: analysis,

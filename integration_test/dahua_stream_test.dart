@@ -10,6 +10,7 @@ import 'package:zvektra/zvektra_theme.dart';
 import 'package:zvektra/multi_camera.dart';
 import 'package:zvektra/playback_detection_results.dart';
 import 'package:zvektra/recording_analysis.dart';
+import 'package:zvektra/parallel_recording_scan.dart';
 
 class TestNvrStore extends DeviceStore {
   TestNvrStore() {
@@ -214,6 +215,16 @@ void main() {
     expect(analysisFinder, findsOneWidget, reason: tester.widgetList<Text>(find.byType(Text))
         .map((text) => text.data).whereType<String>().join(' | '));
     expect(find.text('Analyzing recording'), findsOneWidget);
+    for (var attempt = 0; attempt < 25 && find.byType(ParallelRecordingScan).evaluate().isEmpty; attempt++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(find.byType(ParallelRecordingScan), findsOneWidget);
+    final streams = tester.widgetList<VlcPlayer>(find.byType(VlcPlayer))
+        .map((view) => Uri.parse(view.controller.dataSource).queryParameters).toList();
+    expect(streams, hasLength(8));
+    expect(streams.map((query) => query['starttime']).toSet(), hasLength(8));
+    expect(streams.first['starttime'], endsWith('_15_00_00'));
+    expect(streams.last['endtime'], endsWith('_15_05_00'));
     for (var attempt = 0; attempt < 90; attempt++) {
       await tester.pump(const Duration(milliseconds: 400));
       final timeline = tester.widget<RecordingAnalysisResults>(analysisFinder).analysis;
