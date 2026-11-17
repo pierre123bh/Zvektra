@@ -1,5 +1,7 @@
 import 'package:intl/intl.dart';
 
+import 'recording_analysis.dart';
+
 enum VoiceLanguage {
   lebanese('ar-LB', 'Lebanese Arabic'),
   english('en-US', 'English');
@@ -193,4 +195,35 @@ CameraVoiceCommand? parseCameraVoiceCommand(String transcript, DateTime now) {
   final end = at(endClock.hour, endClock.minute, toPeriod);
   if (!end.isAfter(start) || end.isAfter(now)) return null;
   return (camera: camera, start: start, end: end);
+}
+
+final _analysisPrefix = RegExp(
+    r'^(?:check|analy[sz]e|scan|show me what you detect on|'
+    r'when did (?:a person|a vehicle) appear (?:on|in)|'
+    r'find (?:people|vehicles) (?:on|in)|'
+    r'فرجيني شو بتلقط عَ?|حلل|حلّل|حللي|فتش)\s+',
+    caseSensitive: false,
+  );
+
+bool isRecordingAnalysisRequest(String transcript) => _analysisPrefix.hasMatch(transcript.trim());
+
+({CameraVoiceCommand range, RecordingAnalysisFilter filter})?
+    parseRecordingAnalysis(String transcript, DateTime now) {
+  final prefix = _analysisPrefix.firstMatch(transcript.trim());
+  if (prefix == null) return null;
+  final action = prefix[0]!.toLowerCase();
+  final filter = action.contains('person') || action.contains('people')
+      ? RecordingAnalysisFilter.people
+      : action.contains('vehicle')
+          ? RecordingAnalysisFilter.vehicles
+          : RecordingAnalysisFilter.all;
+  final range = parseCameraVoiceCommand(
+    transcript.trim().substring(prefix.end)
+        .replaceAll('تشرين التاني', 'تشرين الثاني')
+        .replaceAll(RegExp(r'(^|\s)التلاتة(?=\s|$)'), ' تلاتة')
+        .replaceAllMapped(RegExp(r'(^|\s)للتلاتة(?=\s|$)'), (_) => ' لل تلاتة'),
+    now,
+  );
+  if (range == null || range.start == null || range.end == null) return null;
+  return (range: range, filter: filter);
 }

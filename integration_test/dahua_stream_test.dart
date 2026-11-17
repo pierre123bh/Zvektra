@@ -9,6 +9,7 @@ import 'package:zvektra/main.dart';
 import 'package:zvektra/zvektra_theme.dart';
 import 'package:zvektra/multi_camera.dart';
 import 'package:zvektra/playback_detection_results.dart';
+import 'package:zvektra/recording_analysis.dart';
 
 class TestNvrStore extends DeviceStore {
   TestNvrStore() {
@@ -198,6 +199,35 @@ void main() {
     final second = await waitForVideo(tester, '/cam/playback');
     expect(Uri.parse(second.dataSource).queryParameters['channel'], '2');
     expect(second, isNot(same(restored)));
+    await tester.tap(find.byTooltip('Commands'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField),
+        'Check camera 2 on November 15 2024 from 3 to 3:05 pm');
+    await tester.tap(find.byTooltip('Send command'));
+    await tester.pump();
+    expect(find.text('Analyzing recording'), findsOneWidget);
+    final analysisFinder = find.byType(RecordingAnalysisResults);
+    for (var attempt = 0; attempt < 90; attempt++) {
+      await tester.pump(const Duration(milliseconds: 400));
+      final timeline = tester.widget<RecordingAnalysisResults>(analysisFinder).analysis;
+      if (timeline.events.map((event) => event.first.kind).toSet().length == 2) break;
+    }
+    final analysis = tester.widget<RecordingAnalysisResults>(analysisFinder).analysis;
+    expect(analysis.events.map((event) => event.first.kind).toSet(),
+        containsAll(PlaybackDetectionKind.values));
+    expect(analysis.start, DateTime(2024, 11, 15, 15));
+    expect(analysis.end, DateTime(2024, 11, 15, 15, 5));
+    expect(analysis.camera, 2);
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+    expect(find.textContaining('Results are partial'), findsOneWidget);
+    final event = analysis.events.first.first;
+    await tester.tap(find.text(event.kind == PlaybackDetectionKind.person
+        ? 'Person detected' : 'License plate detected').first);
+    final review = await waitForVideo(tester, '/cam/playback', acceptMonochrome: true);
+    expect(Uri.parse(review.dataSource).queryParameters['channel'], '2');
+    expect(Uri.parse(review.dataSource).queryParameters['endtime'], endsWith('_15_05_00'));
+    expect(find.byTooltip('Recording analysis results'), findsOneWidget);
     debugPrint('ZVEKTRA_PLAYBACK_DETECTION_OK');
   });
 }

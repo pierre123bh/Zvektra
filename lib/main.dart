@@ -2,6 +2,7 @@ import 'arabic_playback_command.dart';
 import 'camera_voice_command.dart';
 import 'multi_camera.dart';
 import 'playback_detection_results.dart';
+import 'recording_analysis.dart';
 import 'zvektra_theme.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -453,18 +454,24 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     String transcript, num? confidence, Iterable<String> alternatives,
   ) async {
     final now = DateTime.now();
-    final primary = parseCameraVoiceCommand(transcript, now);
+    ({CameraVoiceCommand range, RecordingAnalysisFilter? filter})? parse(String input) {
+      final analysis = parseRecordingAnalysis(input, now);
+      if (analysis != null) return (range: analysis.range, filter: analysis.filter);
+      final range = parseCameraVoiceCommand(input, now);
+      return range == null ? null : (range: range, filter: null);
+    }
+    final primary = parse(transcript);
     final lowConfidence = confidence != null && confidence >= 0 && confidence < 0.6;
     var parsed = primary;
-    if (primary == null || (primary.start != null && lowConfidence)) {
+    if (primary == null || (primary.range.start != null && lowConfidence)) {
       final playbackMatches = [transcript, ...alternatives]
-          .map((text) => parseCameraVoiceCommand(text, now))
-          .whereType<CameraVoiceCommand>()
-          .where((command) => command.start != null && command.end != null)
+          .map(parse)
+          .nonNulls
+          .where((command) => command.range.start != null && command.range.end != null)
           .toSet();
       parsed = playbackMatches.length == 1 ? playbackMatches.single : null;
     }
-    if (lowConfidence && parsed?.start == null) {
+    if (lowConfidence && parsed?.range.start == null) {
       await _askToRepeat(heard: transcript);
       return;
     }
@@ -482,10 +489,16 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       await _voiceFeedback('Select a device first.', 'اختار جهاز بالأول.');
       return;
     }
-    if (parsed.camera > device.maxChannels) {
+    if (parsed.range.camera > device.maxChannels) {
       await _voiceFeedback('Please give a valid camera number.', 'قلّي رقم كاميرا موجودة عالجهاز.');
       return;
     }
+    await _playVoiceRange(device, parsed.range, parsed.filter);
+  }
+
+  Future<void> _playVoiceRange(
+    Nvr device, CameraVoiceCommand parsed, RecordingAnalysisFilter? analysisFilter,
+  ) async {
     final start = parsed.start;
     final end = parsed.end;
     if (start != null && end != null) {
@@ -497,11 +510,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     }
     try {
       final connection = play(
-        device: device, camera: parsed.camera, start: start, end: end,
+        device: device, camera: parsed.camera, start: start, end: end, analysisFilter: analysisFilter,
       );
       unawaited(start == null
           ? _voiceFeedback('Opening camera ${parsed.camera} live.', 'عم افتح الكاميرا ${parsed.camera} مباشر.')
-          : _voiceFeedback('Opening camera ${parsed.camera} playback.', 'عم افتح تسجيل الكاميرا ${parsed.camera}.'));
+          : analysisFilter != null
+              ? _voiceFeedback('Analyzing camera ${parsed.camera}.', 'عم حلّل تسجيل الكاميرا ${parsed.camera}.')
+              : _voiceFeedback('Opening camera ${parsed.camera} playback.', 'عم افتح تسجيل الكاميرا ${parsed.camera}.'));
       await connection;
     } on Exception {
       await _voiceFeedback('Could not open the camera.', 'ما قدرت افتح الكاميرا.');
@@ -519,7 +534,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
     if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
-      _suspendRecordedPlayback();
+      if (_analysis?.running == true) {
+        _finishRecordingAnalysis('Analysis interrupted. Results are partial.');
+      } else {
+        _suspendRecordedPlayback();
+      }
     } else if (_foreground && _recordingResume?.automatic == true) {
       unawaited(_restoreWhenVisible());
     }
@@ -551,6 +570,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   String output='Ready. Select a device and tell Zvektra what to play.';
   static const _detection = MethodChannel('net.zvektra/playback_detection');
   static const _snapshotLimit = 200;
+  RecordingAnalysis? _analysis;
+  bool _showAnalysis = false;
   final _detections = <PlaybackDetection>[];
   Timer? _detectionTimer;
   int _detectionSession = 0;
@@ -640,11 +661,17 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _replacePlayer(null);
       output = message;
       _videoStatus = message;
+      final analysis = _analysis;
+      if (analysis != null && analysis.running) {
+        analysis.running = false;
+        analysis.status = message;
+      }
     });
   }
 
   Future<void> play({DateTime? start, DateTime? end, Nvr? device, int? camera,
-      bool restore = false, bool restoreDetection = false}) async {
+      bool restore = false, bool restoreDetection = false,
+      RecordingAnalysisFilter? analysisFilter, bool keepAnalysis = false}) async {
     final target = device ?? selected;
     if (target == null) {
       setState(() => output = 'Add a device in Devices first.');
@@ -660,6 +687,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _streamTimeout?.cancel();
     _portCheck?.cancel();
     _stopDetection();
+    if (!keepAnalysis && !restore) {
+      _analysis = analysisFilter == null || start == null || end == null
+          ? null : RecordingAnalysis(start, end, analysisFilter, target.id, cameraNumber);
+      _showAnalysis = _analysis != null;
+    }
     final capture = _snapshotInFlight;
     if (capture != null) {
       setState(() => _connecting = true);
@@ -794,7 +826,18 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
 
     next.addListener(() {
       if (!current() || failed) return;
-      if (next.value.isEnded && _detecting) setState(_stopDetection);
+      final analysis = _analysis;
+      if (analysis != null && analysis.running) {
+        analysis.advance(next.value.position);
+        final length = analysis.end.difference(analysis.start);
+        if (analysis.position >= length || next.value.isEnded) {
+          final complete = length - analysis.position <= const Duration(seconds: 1);
+          _finishRecordingAnalysis(complete ? null : 'Recording ended early. Results are partial.');
+          return;
+        }
+      } else if (next.value.isEnded && _detecting) {
+        setState(_stopDetection);
+      }
       if (next.value.hasError) {
         unawaited(handleFailure());
       } else if (!started && (next.value.isPlaying || next.value.position > Duration.zero)) {
@@ -805,7 +848,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           _hasVideo = true;
           output = '$mode: $source';
         });
-        if (_restoreDetection) {
+        if (_analysis?.running == true) {
+          _analysis!.idle.reset();
+          unawaited(_muteAnalysis(next));
+          _startDetection();
+        } else if (_restoreDetection) {
           _restoreDetection = false;
           _startDetection();
         }
@@ -859,6 +906,10 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   }
 
   Future<void> pausePlayback() async {
+    if (_analysis?.running == true) {
+      _finishRecordingAnalysis('Analysis stopped. Results are partial.');
+      return;
+    }
     if (_connecting) {
       final request = ++_playRequest;
       _streamTimeout?.cancel();
@@ -994,6 +1045,47 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _detecting = false;
   }
 
+  Future<void> _muteAnalysis(VlcPlayerController active) async {
+    try {
+      await active.setVolume(0);
+    } on Exception {
+      // Some streams do not expose audio controls.
+    }
+  }
+
+  void _finishRecordingAnalysis([String? message]) {
+    final analysis = _analysis;
+    if (analysis == null || !analysis.running) return;
+    ++_playRequest;
+    _streamTimeout?.cancel();
+    _portCheck?.cancel();
+    setState(() {
+      analysis.running = false;
+      analysis.status = message;
+      _stopDetection();
+      _replacePlayer(null);
+      _hasVideo = false;
+      _connecting = false;
+      _lastStream = null;
+      _videoStatus = null;
+    });
+  }
+
+  Future<void> _openRecordingEvent(RecordingAnalysis analysis, DateTime moment) async {
+    final device = widget.store.devices.where((device) => device.id == analysis.deviceId).firstOrNull;
+    if (device == null) {
+      _commandFeedback('The device for this recording is unavailable.');
+      return;
+    }
+    if (analysis.running) {
+      _finishRecordingAnalysis('Analysis stopped to review an event. Results are partial.');
+    }
+    final before = moment.subtract(const Duration(seconds: 3));
+    setState(() => _showAnalysis = false);
+    await play(start: before.isBefore(analysis.start) ? analysis.start : before,
+        end: analysis.end, device: device, camera: analysis.camera, keepAnalysis: true);
+  }
+
   void _startDetection() {
     final active = player;
     final start = from;
@@ -1008,7 +1100,17 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _detecting = true;
       _detectionError = null;
     });
-    void sample() => unawaited(_analyzePlaybackFrame(active, start, camera, session));
+    void sample() {
+      final analysis = _analysis;
+      if (analysis != null && analysis.running) {
+        if (analysis.idle.elapsed > const Duration(seconds: 20)) {
+          _finishRecordingAnalysis('Recording stopped advancing. Results are partial.');
+          return;
+        }
+        setState(() {});
+      }
+      unawaited(_analyzePlaybackFrame(active, start, camera, session));
+    }
     _detectionTimer = Timer.periodic(const Duration(seconds: 1), (_) => sample());
     sample();
   }
@@ -1041,7 +1143,12 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         snapshot: entry['snapshot'] as Uint8List,
       ));
       setState(() {
+        final analysis = _analysis;
         for (final result in results) {
+          if (analysis != null && analysis.running) {
+            analysis.add(result);
+            continue;
+          }
           if (result.kind == PlaybackDetectionKind.person) {
             _peopleCount++;
           } else {
@@ -1054,6 +1161,10 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       });
     } catch (_) {
       if (!current() || !playing()) return;
+      if (_analysis?.running == true) {
+        _finishRecordingAnalysis('Frame analysis failed. Results are partial.');
+        return;
+      }
       setState(() {
         _stopDetection();
         _detectionError = 'Could not analyze the playback frame. Try starting detection again.';
@@ -1066,6 +1177,20 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   Future<void> execute(String raw) async {
     final input = raw.trim();
     if (input.isEmpty) return;
+    final analysis = parseRecordingAnalysis(input, DateTime.now());
+    if (analysis != null) {
+      final device = selected;
+      if (device == null || analysis.range.camera > device.maxChannels) {
+        _commandFeedback('Select a device and a valid camera number.');
+        return;
+      }
+      await _playVoiceRange(device, analysis.range, analysis.filter);
+      return;
+    }
+    if (isRecordingAnalysisRequest(input)) {
+      _commandFeedback('Give a camera, recording date, start time and end time.');
+      return;
+    }
     final normalized = RegExp(r'[\u0600-\u06FF]').hasMatch(input)
         ? arabicPlaybackCommand(input) : input;
     if (normalized == null) {
@@ -1184,14 +1309,14 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     }
   }
 
-  Future<void> _playSelectedRange() async {
+  Future<void> _playSelectedRange({RecordingAnalysisFilter? analysisFilter}) async {
     final start = _atTime(_playbackFrom);
     final end = _atTime(_playbackTo);
     if (!end.isAfter(start) || end.isAfter(DateTime.now())) {
       setState(() => output = 'Select a valid time range on the chosen date.');
       return;
     }
-    await play(start: start, end: end);
+    await play(start: start, end: end, analysisFilter: analysisFilter);
   }
 
   Future<void> toggleMic() async {
@@ -1304,6 +1429,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   @override
   Widget build(BuildContext context) {
     final n = selected;
+    final analysis = _analysis;
+    final analyzing = analysis?.running == true;
     return LayoutBuilder(builder: (context, bounds) => Column(children: [
       Padding(padding: const EdgeInsets.fromLTRB(8, 4, 8, 2), child: Row(children: [
         Expanded(child: DropdownButtonFormField<String>(
@@ -1312,7 +1439,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           items: widget.store.devices.map((x) => DropdownMenuItem(
             value: x.id, child: Text(x.name, overflow: TextOverflow.ellipsis),
           )).toList(),
-          onChanged: (x) => setState(() {
+          onChanged: analyzing ? null : (x) => setState(() {
             if (x != n?.id) _stopDetection();
             selectedId = x;
           }),
@@ -1324,7 +1451,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           decoration: const InputDecoration(labelText: 'Camera', isDense: true, border: OutlineInputBorder()),
           items: List.generate(n?.maxChannels ?? 1,
             (i) => DropdownMenuItem(value: i + 1, child: Text('Cam ${i + 1}'))),
-          onChanged: n == null ? null : (v) {
+          onChanged: n == null || analyzing ? null : (v) {
             if (v == null || v == channel) return;
             setState(() {
               _stopDetection();
@@ -1352,12 +1479,24 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           icon: const Icon(Icons.play_arrow), label: const Text('Playback'),
         ),
         IconButton(onPressed: pausePlayback, icon: const Icon(Icons.pause), tooltip: 'Pause'),
-        IconButton(onPressed: resumePlayback, icon: const Icon(Icons.play_arrow), tooltip: 'Resume'),
+        IconButton(onPressed: analyzing ? null : resumePlayback, icon: const Icon(Icons.play_arrow), tooltip: 'Resume'),
         IconButton(
-          onPressed: _detecting ? () => setState(_stopDetection) : _startDetection,
+          onPressed: analyzing ? null : _detecting ? () => setState(_stopDetection) : _startDetection,
           icon: Icon(_detecting ? Icons.stop_circle_outlined : Icons.center_focus_strong),
           tooltip: _detecting ? 'Stop detection' : 'Detect people and vehicles',
         ),
+        IconButton(
+          onPressed: analyzing ? null
+              : () => unawaited(_playSelectedRange(analysisFilter: RecordingAnalysisFilter.all)),
+          icon: const Icon(Icons.manage_search),
+          tooltip: 'Analyze selected recording',
+        ),
+        if (analysis != null && !analyzing && !_showAnalysis)
+          IconButton(
+            onPressed: () => setState(() => _showAnalysis = true),
+            icon: const Icon(Icons.list_alt),
+            tooltip: 'Recording analysis results',
+          ),
         IconButton(onPressed: _voiceBusy || _awaitingSpeech ? null : toggleMic,
           icon: Icon(recording ? Icons.mic : Icons.mic_none), tooltip: 'Voice'),
         PopupMenuButton<VoiceLanguage>(
@@ -1394,7 +1533,16 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         width: double.infinity,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(16), border: Border.all(color: panelBorder)),
-        child: _videoPanel(),
+        child: Stack(fit: StackFit.expand, children: [
+          _videoPanel(),
+          if (_showAnalysis && analysis != null)
+            RecordingAnalysisResults(
+              analysis: analysis,
+              onStop: () => _finishRecordingAnalysis('Analysis stopped. Results are partial.'),
+              onClose: () => setState(() => _showAnalysis = false),
+              onOpen: (moment) => unawaited(_openRecordingEvent(analysis, moment)),
+            ),
+        ]),
       )),
       if (_detectionError case final message?)
         Padding(
