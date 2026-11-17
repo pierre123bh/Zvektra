@@ -131,51 +131,10 @@ CameraVoiceCommand? parseCameraVoiceCommand(String transcript, DateTime now) {
           (m) => '${m[1]} ${m[2]}:${m[3]}')
       .replaceAll(RegExp(r'\s+'), ' ').trim();
   final live = RegExp(
-    r'^(?:(?:show|open|play|view)\s+)*(?:live\s+cam\s+(\d{1,3})|cam\s+(\d{1,3})\s+live)
+    r'^(?:(?:show|open|play|view)\s+)*(?:live\s+cam\s+(\d{1,3})|cam\s+(\d{1,3})\s+live)$',
+  ).firstMatch(text);
   if (live != null) {
     final camera = int.parse(live[1] ?? live[2]!);
-    return camera == 0 ? null : (camera: camera, start: null, end: null);
-  }
-  final playback = RegExp(
-    r'^(?:(?:show|open|play|playback|watch)\s+)*cam\s+(\d{1,3})'
-    r'(?:\s+playback)?(?:\s+(.+?))?\s+from\s+(.+?)\s+to\s+(.+)$',
-  ).firstMatch(text);
-  if (playback == null) return null;
-  final camera = int.parse(playback[1]!);
-  if (camera == 0) return null;
-  final startClock = _voiceClock(playback[3]!);
-  if (startClock == null) return null;
-  final endAndDate = RegExp(r'^(\d{1,2}(?:(?::|\s+(?:and\s+)?)(\d{1,2})(?![\d/.-]))?\s*(?:am|pm)?)(?:\s+(.+))?$')
-      .firstMatch(playback[4]!);
-  if (endAndDate == null) return null;
-  final endClock = _voiceClock(endAndDate[1]!);
-  if (endClock == null) return null;
-  final before = playback[2];
-  final after = endAndDate[3];
-  final beforeDate = before == null ? null : _voiceDate(before, now);
-  final afterDate = after == null ? null : _voiceDate(after, now);
-  if ((before != null && beforeDate == null) ||
-      (after != null && afterDate == null)) return null;
-  final beforeRelative = before == 'today' || before == 'yesterday';
-  final afterRelative = after == 'today' || after == 'yesterday';
-  if (beforeDate != null && afterDate != null &&
-      beforeRelative == afterRelative && beforeDate != afterDate) return null;
-  final date = afterRelative ? beforeDate ?? afterDate : afterDate ?? beforeDate;
-  if (date == null) return null;
-  DateTime at(int hour, int minute, String? period) => DateTime(
-      date.year, date.month, date.day,
-      period == null ? hour : hour % 12 + (period == 'pm' ? 12 : 0), minute);
-  final fromPeriod = startClock.period ?? (startClock.hour >= 1 && startClock.hour <= 12 ? endClock.period : null);
-  final toPeriod = endClock.period ?? (endClock.hour >= 1 && endClock.hour <= 12 ? startClock.period : null);
-  final start = at(startClock.hour, startClock.minute, fromPeriod);
-  final end = at(endClock.hour, endClock.minute, toPeriod);
-  if (!end.isAfter(start) || end.isAfter(now)) return null;
-  return (camera: camera, start: start, end: end);
-}
-,
-  ).firstMatch(text);
-  if (live != null) {
-    final camera = int.parse(live[1]!);
     return camera == 0 ? null : (camera: camera, start: null, end: null);
   }
   final playback = RegExp(
