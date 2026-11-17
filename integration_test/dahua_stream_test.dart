@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_vlc_player/flutter_vlc_player.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:intl/intl.dart';
 import 'package:zvektra/main.dart';
 import 'package:zvektra/zvektra_theme.dart';
 import 'package:zvektra/multi_camera.dart';
@@ -101,7 +102,15 @@ void main() {
 
     await tester.tap(find.text('Assistant'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Playback'));
+    expect(find.text(DateFormat('dd MMM yyyy').format(DateTime.now())), findsOneWidget);
+    // Select a past interval explicitly so the fixture also runs before 1 PM.
+    await tester.tap(find.byTooltip('Commands'));
+    await tester.pump();
+    tester.widget<TextField>(find.byType(TextField)).controller!.text =
+        'playback camera 1 yesterday from 12 pm to 1 pm';
+    tester.widget<IconButton>(find.byWidgetPredicate(
+        (widget) => widget is IconButton && widget.tooltip == 'Send command')).onPressed!();
+    await tester.tap(find.byTooltip('Commands'));
     for (var attempt = 0; attempt < 20 && find.byType(VlcPlayer).evaluate().isEmpty; attempt++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
