@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zvektra/camera_voice_command.dart';
 import 'package:zvektra/playback_detection_results.dart';
 import 'package:zvektra/recording_analysis.dart';
-import 'package:zvektra/parallel_recording_scan.dart';
 
 void main() {
   final start = DateTime(2026, 11, 15, 15);
@@ -27,18 +26,6 @@ void main() {
     expect(parseRecordingAnalysis('Analyze camera 2 November 15', now), isNull);
   });
 
-  test('partitions three minutes across eight contiguous whole-second ranges', () {
-    final finish = start.add(const Duration(minutes: 3));
-    final ranges = parallelRecordingRanges(start, finish);
-    expect(ranges, hasLength(8));
-    expect(ranges.first.start, start);
-    expect(ranges.last.end, finish);
-    for (var index = 1; index < ranges.length; index++) {
-      expect(ranges[index].start, ranges[index - 1].end);
-    }
-    expect(ranges.every((range) => range.end.difference(range.start).inSeconds <= 23), isTrue);
-  });
-
   test('joins consecutive detections by category and starts a new event after a gap', () {
     final analysis = RecordingAnalysis(start, end, RecordingAnalysisFilter.all, 'test', 2);
     PlaybackDetection detection(PlaybackDetectionKind kind, int second) => PlaybackDetection(
@@ -55,12 +42,6 @@ void main() {
     expect(analysis.events, hasLength(3));
     expect(analysis.events.first.first, same(first));
     expect(analysis.events.first.lastSeen, start.add(const Duration(seconds: 7)));
-
-    analysis.add(detection(PlaybackDetectionKind.person, 9));
-    analysis.add(detection(PlaybackDetectionKind.person, 2));
-    expect(analysis.events, hasLength(2));
-    expect(analysis.events.first.first.timestamp, start.add(const Duration(seconds: 2)));
-    expect(analysis.events.first.lastSeen, start.add(const Duration(seconds: 11)));
 
     final vehicles = RecordingAnalysis(start, end, RecordingAnalysisFilter.vehicles, 'test', 2);
     vehicles.add(first);

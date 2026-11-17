@@ -10,7 +10,6 @@ import 'package:zvektra/zvektra_theme.dart';
 import 'package:zvektra/multi_camera.dart';
 import 'package:zvektra/playback_detection_results.dart';
 import 'package:zvektra/recording_analysis.dart';
-import 'package:zvektra/parallel_recording_scan.dart';
 
 class TestNvrStore extends DeviceStore {
   TestNvrStore() {
@@ -215,16 +214,6 @@ void main() {
     expect(analysisFinder, findsOneWidget, reason: tester.widgetList<Text>(find.byType(Text))
         .map((text) => text.data).whereType<String>().join(' | '));
     expect(find.text('Analyzing recording'), findsOneWidget);
-    for (var attempt = 0; attempt < 25 && find.byType(ParallelRecordingScan).evaluate().isEmpty; attempt++) {
-      await tester.pump(const Duration(milliseconds: 200));
-    }
-    expect(find.byType(ParallelRecordingScan), findsOneWidget);
-    final streams = tester.widgetList<VlcPlayer>(find.byType(VlcPlayer))
-        .map((view) => Uri.parse(view.controller.dataSource).queryParameters).toList();
-    expect(streams, hasLength(8));
-    expect(streams.map((query) => query['starttime']).toSet(), hasLength(8));
-    expect(streams.first['starttime'], endsWith('_15_00_00'));
-    expect(streams.last['endtime'], endsWith('_15_05_00'));
     for (var attempt = 0; attempt < 90; attempt++) {
       await tester.pump(const Duration(milliseconds: 400));
       final timeline = tester.widget<RecordingAnalysisResults>(analysisFinder).analysis;
@@ -236,11 +225,6 @@ void main() {
     expect(analysis.start, DateTime(2024, 11, 15, 15));
     expect(analysis.end, DateTime(2024, 11, 15, 15, 5));
     expect(analysis.camera, 2);
-    for (var attempt = 0; attempt < 30 && analysis.effectiveSpeed == null; attempt++) {
-      await tester.pump(const Duration(milliseconds: 200));
-    }
-    expect(analysis.effectiveSpeed, greaterThan(0));
-    debugPrint('Recording analysis fixture speed: ${analysis.effectiveSpeed!.toStringAsFixed(2)}x');
     await tester.tap(find.text('Stop'));
     await tester.pump();
     expect(find.textContaining('Results are partial'), findsOneWidget);

@@ -8,7 +8,7 @@ enum RecordingAnalysisFilter { all, people, vehicles }
 class RecordingEvent {
   RecordingEvent(this.first) : lastSeen = first.timestamp;
 
-  PlaybackDetection first;
+  final PlaybackDetection first;
   DateTime lastSeen;
 }
 
@@ -22,32 +22,12 @@ class RecordingAnalysis {
   final String deviceId;
   final int camera;
   final events = <RecordingEvent>[];
+  final _recent = <PlaybackDetectionKind, RecordingEvent>{};
   static const _eventLimit = 200;
   static const _joinGap = Duration(seconds: 3);
 
   Duration position = Duration.zero;
   final idle = Stopwatch()..start();
-  final _scanClock = Stopwatch();
-  Duration _scanStart = Duration.zero;
-  bool fastRequested = false;
-
-  void startClock() {
-    _scanStart = position;
-    _scanClock.start();
-  }
-
-  double? get effectiveSpeed => _scanClock.elapsed < const Duration(seconds: 3)
-      ? null : (position - _scanStart).inMilliseconds / _scanClock.elapsedMilliseconds;
-
-  void stopClock() => _scanClock.stop();
-
-  void restartAtNormalSpeed() {
-    fastRequested = false;
-    position = Duration.zero;
-    _scanClock..stop()..reset();
-    events.clear();
-    overflow = false;
-  }
   bool running = true;
   bool overflow = false;
   String? status;
@@ -65,30 +45,22 @@ class RecordingAnalysis {
         (filter == RecordingAnalysisFilter.vehicles && kind != PlaybackDetectionKind.licensePlate)) {
       return;
     }
-    RecordingEvent? match;
-    for (var index = events.length - 1; index >= 0; index--) {
-      final event = events[index];
-      if (event.first.kind != kind ||
-          detection.timestamp.difference(event.lastSeen) > _joinGap ||
-          event.first.timestamp.difference(detection.timestamp) > _joinGap) continue;
-      if (match == null) {
-        match = event;
-      } else {
-        if (event.first.timestamp.isBefore(match.first.timestamp)) match.first = event.first;
-        if (event.lastSeen.isAfter(match.lastSeen)) match.lastSeen = event.lastSeen;
-        events.removeAt(index);
+    final previous = _recent[kind];
+    if (previous != null) {
+      final gap = detection.timestamp.difference(previous.lastSeen);
+      if (gap.isNegative) return;
+      if (gap <= _joinGap) {
+        previous.lastSeen = detection.timestamp;
+        return;
       }
     }
-    if (match != null) {
-      if (detection.timestamp.isBefore(match.first.timestamp)) match.first = detection;
-      if (detection.timestamp.isAfter(match.lastSeen)) match.lastSeen = detection.timestamp;
-    } else if (events.length < _eventLimit) {
-      events.add(RecordingEvent(detection));
-    } else {
+    if (events.length >= _eventLimit) {
       overflow = true;
       return;
     }
-    events.sort((a, b) => a.first.timestamp.compareTo(b.first.timestamp));
+    final event = RecordingEvent(detection);
+    _recent[kind] = event;
+    events.add(event);
   }
 }
 
@@ -109,7 +81,6 @@ class RecordingAnalysisResults extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final time = DateFormat('HH:mm:ss');
-    final speed = analysis.effectiveSpeed;
     final progress = (analysis.position.inMilliseconds /
         analysis.end.difference(analysis.start).inMilliseconds).clamp(0.0, 1.0).toDouble();
     return Material(
@@ -120,8 +91,7 @@ class RecordingAnalysisResults extends StatelessWidget {
           ListTile(
             title: Text(analysis.running ? 'Analyzing recording' : 'Recording analysis'),
             subtitle: Text('${DateFormat('dd MMM yyyy').format(analysis.start)} '
-                '· Cam ${analysis.camera} · ${time.format(analysis.start)}–${time.format(analysis.end)}'
-                '${speed == null ? '' : ' · ${speed.toStringAsFixed(1)}×'}'),
+                '· Cam ${analysis.camera} · ${time.format(analysis.start)}–${time.format(analysis.end)}'),
             trailing: analysis.running
                 ? TextButton(onPressed: onStop, child: const Text('Stop'))
                 : IconButton(tooltip: 'Close analysis', onPressed: onClose,

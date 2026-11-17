@@ -3,7 +3,6 @@ import 'camera_voice_command.dart';
 import 'multi_camera.dart';
 import 'playback_detection_results.dart';
 import 'recording_analysis.dart';
-import 'parallel_recording_scan.dart';
 import 'zvektra_theme.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -573,7 +572,6 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   static const _snapshotLimit = 200;
   RecordingAnalysis? _analysis;
   bool _showAnalysis = false;
-  ParallelRecordingScan? _parallelScan;
   final _detections = <PlaybackDetection>[];
   Timer? _detectionTimer;
   int _detectionSession = 0;
@@ -666,7 +664,6 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       final analysis = _analysis;
       if (analysis != null && analysis.running) {
         analysis.running = false;
-        analysis.stopClock();
         analysis.status = message;
       }
     });
@@ -703,7 +700,6 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     if (!_isCurrent(request)) return;
     setState(() {
       _replacePlayer(null);
-      _parallelScan = null;
       if (!restore) {
         _detections.clear();
         _peopleCount = 0;
@@ -756,42 +752,6 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           target, cameraNumber, password: password, mainStream: true),
       _ => null,
     };
-    final analysis = _analysis;
-    final recordingPassword = password;
-    if (analysisFilter != null && analysis != null &&
-        parallelRecordingRanges(analysis.start, analysis.end).length > 1) {
-      setState(() {
-        _connecting = false;
-        _parallelScan = ParallelRecordingScan(
-          key: ObjectKey(analysis),
-          analysis: analysis,
-          source: (from, to) => StreamBuilderService.url(
-            target, cameraNumber, start: from, end: to, password: recordingPassword,
-          )!,
-          onUpdate: () {
-            if (_isCurrent(request)) setState(() {});
-          },
-          onFinished: () {
-            if (_isCurrent(request)) _finishRecordingAnalysis();
-          },
-          onUnavailable: () {
-            if (!_isCurrent(request)) return;
-            analysis.restartAtNormalSpeed();
-            setState(() {
-              _parallelScan = null;
-              _connecting = true;
-            });
-            unawaited(WidgetsBinding.instance.endOfFrame.then((_) {
-              if (_isCurrent(request)) {
-                _openStream(request, link, port, mode, source,
-                    softwareDecoding: false, alternateLink: alternateLink);
-              }
-            }));
-          },
-        );
-      });
-      return;
-    }
     _openStream(
       request, link, port, mode, source,
       // A resumed recording may have lost its hardware decoding surface.
@@ -807,7 +767,6 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     String source, {
     required bool softwareDecoding,
     String? alternateLink,
-    bool allowFastAnalysis = true,
   }) {
     final next = VlcPlayerController.network(
       link,
@@ -833,22 +792,6 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       final capture = _snapshotInFlight;
       if (capture != null) await _waitForSnapshot(capture);
       if (!current()) return;
-      final analysis = _analysis;
-      if (started && allowFastAnalysis && analysis != null &&
-          analysis.running && analysis.fastRequested) {
-        analysis.restartAtNormalSpeed();
-        setState(() {
-          _connecting = true;
-          _hasVideo = false;
-          _replacePlayer(null);
-        });
-        await _playerTeardown;
-        if (!_isCurrent(request)) return;
-        _openStream(request, link, port, mode, source,
-            softwareDecoding: softwareDecoding, alternateLink: alternateLink,
-            allowFastAnalysis: false);
-        return;
-      }
       setState(() {
         _connecting = true;
         _hasVideo = false;
@@ -906,11 +849,9 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           output = '$mode: $source';
         });
         if (_analysis?.running == true) {
-          final analysis = _analysis!;
-          analysis.idle.reset();
-          analysis.startClock();
-          unawaited(_configureAnalysisSpeed(next, analysis, allowFastAnalysis));
-          _startDetection(onFastStall: allowFastAnalysis ? handleFailure : null);
+          _analysis!.idle.reset();
+          unawaited(_muteAnalysis(next));
+          _startDetection();
         } else if (_restoreDetection) {
           _restoreDetection = false;
           _startDetection();
@@ -1104,21 +1045,11 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _detecting = false;
   }
 
-  Future<void> _configureAnalysisSpeed(
-    VlcPlayerController active, RecordingAnalysis analysis, bool allowFast,
-  ) async {
+  Future<void> _muteAnalysis(VlcPlayerController active) async {
     try {
       await active.setVolume(0);
     } on Exception {
       // Some streams do not expose audio controls.
-    }
-    if (!allowFast || !mounted || !identical(player, active) || !analysis.running) return;
-    analysis.fastRequested = true;
-    try {
-      await active.setPlaybackSpeed(8.0);
-    } on Exception {
-      // If the player refuses the rate, keep analyzing at the rate it delivers.
-      analysis.fastRequested = false;
     }
   }
 
@@ -1130,9 +1061,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _portCheck?.cancel();
     setState(() {
       analysis.running = false;
-      analysis.stopClock();
       analysis.status = message;
-      _parallelScan = null;
       _stopDetection();
       _replacePlayer(null);
       _hasVideo = false;
@@ -1157,7 +1086,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         end: analysis.end, device: device, camera: analysis.camera, keepAnalysis: true);
   }
 
-  void _startDetection({Future<void> Function()? onFastStall}) {
+  void _startDetection() {
     final active = player;
     final start = from;
     if (_connecting || !_hasVideo || active == null || start == null || active.value.isEnded) {
@@ -1171,35 +1100,18 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _detecting = true;
       _detectionError = null;
     });
-    Duration? lastSample;
-    var lastProgress = -1;
     void sample() {
-      if (!mounted || session != _detectionSession || !identical(player, active)) return;
       final analysis = _analysis;
       if (analysis != null && analysis.running) {
-        if (onFastStall != null && analysis.fastRequested &&
-            analysis.idle.elapsed > const Duration(seconds: 5)) {
-          unawaited(onFastStall());
-          return;
-        }
         if (analysis.idle.elapsed > const Duration(seconds: 20)) {
           _finishRecordingAnalysis('Recording stopped advancing. Results are partial.');
           return;
         }
-        final position = analysis.position;
-        if (position.inSeconds != lastProgress) {
-          lastProgress = position.inSeconds;
-          setState(() {});
-        }
-        if (_analyzing || !active.value.isPlaying ||
-            (lastSample != null && position - lastSample! < const Duration(seconds: 1))) return;
-        lastSample = position;
+        setState(() {});
       }
       unawaited(_analyzePlaybackFrame(active, start, camera, session));
     }
-    final interval = _analysis?.running == true
-        ? const Duration(milliseconds: 125) : const Duration(seconds: 1);
-    _detectionTimer = Timer.periodic(interval, (_) => sample());
+    _detectionTimer = Timer.periodic(const Duration(seconds: 1), (_) => sample());
     sample();
   }
 
@@ -1626,7 +1538,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(16), border: Border.all(color: panelBorder)),
         child: Stack(fit: StackFit.expand, children: [
-          _parallelScan ?? _videoPanel(),
+          _videoPanel(),
           if (_showAnalysis && analysis != null)
             RecordingAnalysisResults(
               analysis: analysis,
