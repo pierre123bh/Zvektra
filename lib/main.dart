@@ -1474,65 +1474,94 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
           _playbackPicker('To ${_playbackTo.format(context)}', () => _selectPlaybackTime(false)),
         ]),
       ),
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        alignment: WrapAlignment.spaceBetween,
-        children: [
-        FilledButton.icon(
-          onPressed: _playSelectedRange,
-          icon: const Icon(Icons.play_arrow), label: const Text('Playback'),
-        ),
-        IconButton(onPressed: pausePlayback, icon: const Icon(Icons.pause), tooltip: 'Pause'),
-        IconButton(onPressed: analyzing ? null : resumePlayback, icon: const Icon(Icons.play_arrow), tooltip: 'Resume'),
-        IconButton(
-          onPressed: analyzing ? null : _detecting ? () => setState(_stopDetection) : _startDetection,
-          icon: Icon(_detecting ? Icons.stop_circle_outlined : Icons.center_focus_strong),
-          tooltip: _detecting ? 'Stop detection' : 'Detect people and vehicles',
-        ),
-        IconButton(
-          onPressed: analyzing ? null
-              : () => unawaited(_playSelectedRange(analysisFilter: RecordingAnalysisFilter.all)),
-          icon: const Icon(Icons.manage_search),
-          tooltip: 'Analyze selected recording',
-        ),
-        if (analysis != null && !analyzing && !_showAnalysis)
-          IconButton(
-            onPressed: () => setState(() => _showAnalysis = true),
-            icon: const Icon(Icons.list_alt),
-            tooltip: 'Recording analysis results',
-          ),
-        IconButton(onPressed: _voiceBusy || _awaitingSpeech ? null : toggleMic,
-          icon: Icon(recording ? Icons.mic : Icons.mic_none), tooltip: 'Voice'),
-        PopupMenuButton<VoiceLanguage>(
-          tooltip: 'Voice language · ${_voiceLanguage.label}',
-          icon: const Icon(Icons.language),
-          enabled: !recording && !_voiceBusy && !_awaitingSpeech,
-          initialValue: _voiceLanguage,
-          onSelected: (language) => unawaited(_selectVoiceLanguage(language)),
-          itemBuilder: (_) => VoiceLanguage.values.map((language) =>
-              PopupMenuItem(value: language, child: Text(language.label))).toList(),
-        ),
-        IconButton(onPressed: () => setState(() => _showCommands = !_showCommands),
-          icon: const Icon(Icons.keyboard), tooltip: 'Commands'),
-        if (bounds.maxHeight < 345 && _detections.isNotEmpty)
-          IconButton(
-            onPressed: () => showModalBottomSheet<void>(
-              context: context,
-              builder: (_) => SafeArea(child: PlaybackDetectionResults(
-                detections: List.of(_detections),
-                peopleCount: _peopleCount,
-                plateCount: _plateCount,
-                running: false,
-                onSave: (snapshot) {
-                  Navigator.pop(context);
-                  unawaited(_savePlaybackSnapshot(snapshot));
-                },
-              )),
-            ),
-            icon: const Icon(Icons.photo_library_outlined),
-            tooltip: 'Detection results',
-          ),
-      ])),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+        child: LayoutBuilder(builder: (context, toolbar) {
+          const gap = 6.0;
+          final columns = toolbar.maxWidth >= 620 ? 8 : 4;
+          final width = (toolbar.maxWidth - (columns - 1) * gap) / columns;
+          return Wrap(
+            spacing: gap,
+            runSpacing: gap,
+            children: [
+              _PlaybackAction(
+                width: width, label: 'Playback', icon: Icons.play_arrow,
+                primary: true, onPressed: _playSelectedRange,
+              ),
+              _PlaybackAction(
+                width: width, label: 'Pause', icon: Icons.pause,
+                onPressed: pausePlayback,
+              ),
+              _PlaybackAction(
+                width: width, label: 'Resume', icon: Icons.play_arrow,
+                onPressed: analyzing ? null : resumePlayback,
+              ),
+              _PlaybackAction(
+                width: width,
+                label: _detecting ? 'Stop detect' : 'Detect',
+                icon: _detecting ? Icons.stop_circle_outlined : Icons.center_focus_strong,
+                tooltip: _detecting ? 'Stop detection' : 'Detect people and vehicles',
+                onPressed: analyzing ? null : _detecting ? () => setState(_stopDetection) : _startDetection,
+              ),
+              _PlaybackAction(
+                width: width, label: 'Analyze', icon: Icons.manage_search,
+                tooltip: 'Analyze selected recording',
+                onPressed: analyzing ? null
+                    : () => unawaited(_playSelectedRange(analysisFilter: RecordingAnalysisFilter.all)),
+              ),
+              _PlaybackAction(
+                width: width, label: recording ? 'Listening' : 'Voice',
+                icon: recording ? Icons.mic : Icons.mic_none, tooltip: 'Voice',
+                onPressed: _voiceBusy || _awaitingSpeech ? null : toggleMic,
+              ),
+              SizedBox(
+                width: width,
+                child: PopupMenuButton<VoiceLanguage>(
+                  tooltip: 'Voice language · ${_voiceLanguage.label}',
+                  enabled: !recording && !_voiceBusy && !_awaitingSpeech,
+                  initialValue: _voiceLanguage,
+                  onSelected: (language) => unawaited(_selectVoiceLanguage(language)),
+                  itemBuilder: (_) => VoiceLanguage.values.map((language) =>
+                      PopupMenuItem(value: language, child: Text(language.label))).toList(),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(12)),
+                    child: const SizedBox(height: 54,
+                      child: _PlaybackActionLabel(icon: Icons.language, label: 'Language')),
+                  ),
+                ),
+              ),
+              _PlaybackAction(
+                width: width, label: 'Commands', icon: Icons.keyboard,
+                onPressed: () => setState(() => _showCommands = !_showCommands),
+              ),
+              if (analysis != null && !analyzing && !_showAnalysis)
+                _PlaybackAction(
+                  width: width, label: 'Results', icon: Icons.list_alt,
+                  tooltip: 'Recording analysis results',
+                  onPressed: () => setState(() => _showAnalysis = true),
+                ),
+              if (bounds.maxHeight < 345 && _detections.isNotEmpty)
+                _PlaybackAction(
+                  width: width, label: 'Photos', icon: Icons.photo_library_outlined,
+                  tooltip: 'Detection results',
+                  onPressed: () => showModalBottomSheet<void>(
+                    context: context,
+                    builder: (_) => SafeArea(child: PlaybackDetectionResults(
+                      detections: List.of(_detections),
+                      peopleCount: _peopleCount,
+                      plateCount: _plateCount,
+                      running: false,
+                      onSave: (snapshot) {
+                        Navigator.pop(context);
+                        unawaited(_savePlaybackSnapshot(snapshot));
+                      },
+                    )),
+                  ),
+                ),
+            ],
+          );
+        }),
+      ),
       Expanded(child: Container(
         width: double.infinity,
         clipBehavior: Clip.antiAlias,
@@ -1578,5 +1607,73 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         ]),
       ),
     ]));
+  }
+}
+
+class _PlaybackAction extends StatelessWidget {
+  const _PlaybackAction({
+    required this.width,
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+    this.primary = false,
+  });
+
+  final double width;
+  final String label;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final String? tooltip;
+  final bool primary;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: width,
+      height: 54,
+      child: IconButton(
+        tooltip: tooltip ?? label,
+        onPressed: onPressed,
+        style: IconButton.styleFrom(
+          backgroundColor: primary ? colors.primary : surface,
+          foregroundColor: primary ? colors.onPrimary : colors.onSurface,
+          disabledBackgroundColor: surface.withValues(alpha: 0.55),
+          disabledForegroundColor: colors.onSurface.withValues(alpha: 0.45),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        icon: _PlaybackActionLabel(icon: icon, label: label),
+      ),
+    );
+  }
+}
+
+class _PlaybackActionLabel extends StatelessWidget {
+  const _PlaybackActionLabel({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = IconTheme.of(context).color;
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 21),
+        const SizedBox(height: 3),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    );
   }
 }
