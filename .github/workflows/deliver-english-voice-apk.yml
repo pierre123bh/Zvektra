@@ -1,0 +1,35 @@
+name: Publish verified English Voice APK
+on:
+  push:
+    branches: [delivery/english-voice-bd7ee14]
+    paths: [.github/workflows/deliver-english-voice-apk.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: bd7ee14d5a214858ae05cde058bab09077d1d5b5
+      BUILD_RUN: '44146993707'
+      SMOKE_RUN: '44146994163'
+      RELEASE_TAG: english-voice-bd7ee14
+    steps:
+      - name: Verify Android checks and publish the APK
+        run: |
+          set -euo pipefail
+          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
+            gh api "repos/$GH_REPO/actions/runs/$run" \
+              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
+            gh run watch "$run" --exit-status --interval 15
+          done
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — English Voice" \
+            --notes "ARM64 Android APK from a verified build. Uses English for voice prompts and recognition."
