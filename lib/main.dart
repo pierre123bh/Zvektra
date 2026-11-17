@@ -390,7 +390,9 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         _voiceBusy = false;
         _awaitingSpeech = false;
       });
-      await _handleVoiceCommand(transcript ?? '', confidence);
+      final alternatives = payload is Map ? payload['alternatives'] : null;
+      await _handleVoiceCommand(transcript ?? '', confidence,
+          alternatives is List ? alternatives.whereType<String>() : const []);
     });
   }
 
@@ -434,30 +436,45 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     }
   }
 
-  Future<void> _voiceFeedback(String english, String arabic) async {
+  Future<void> _voiceFeedback(String english, String arabic, {String heard = ''}) async {
     if (!mounted) return;
     final message = _voiceLanguage.say(english, arabic);
-    _commandFeedback(message);
+    final label = _voiceLanguage.say('Heard', 'سمعت');
+    _commandFeedback(heard.isEmpty ? message : '$label: “$heard”\n$message');
     await _speak(message);
   }
 
-  Future<void> _askToRepeat() => _voiceFeedback(
+  Future<void> _askToRepeat({String heard = ''}) => _voiceFeedback(
       'Please repeat. Say live for live video, or give the camera, date and time range.',
-      'عيد الطلب لو سمحت. قلّي مباشر، أو للتسجيل قلّي رقم الكاميرا والتاريخ والوقت.');
+      'عيد الطلب لو سمحت. قلّي مباشر، أو للتسجيل قلّي رقم الكاميرا والتاريخ والوقت.',
+      heard: heard);
 
-  Future<void> _handleVoiceCommand(String transcript, num? confidence) async {
-    if (confidence != null && confidence >= 0 && confidence < 0.6) {
-      await _askToRepeat();
+  Future<void> _handleVoiceCommand(
+    String transcript, num? confidence, Iterable<String> alternatives,
+  ) async {
+    final now = DateTime.now();
+    final primary = parseCameraVoiceCommand(transcript, now);
+    final lowConfidence = confidence != null && confidence >= 0 && confidence < 0.6;
+    var parsed = primary;
+    if (primary == null || (primary.start != null && lowConfidence)) {
+      final playbackMatches = [transcript, ...alternatives]
+          .map((text) => parseCameraVoiceCommand(text, now))
+          .whereType<CameraVoiceCommand>()
+          .where((command) => command.start != null && command.end != null)
+          .toSet();
+      parsed = playbackMatches.length == 1 ? playbackMatches.single : null;
+    }
+    if (lowConfidence && parsed?.start == null) {
+      await _askToRepeat(heard: transcript);
       return;
     }
-    final parsed = parseCameraVoiceCommand(transcript, DateTime.now());
     if (parsed == null) {
       final action = transcript.trim().toLowerCase().replaceFirst(RegExp(r'[.!?]$'), '');
       if (RegExp(r'^(?:pause|resume)(?: playback)?$|^(?:stop )?(?:count|counting|detect|detecting|detection|snapshot)(?: people| vehicles)?$|^(?:skip )?(?:forward|back|rewind)(?: \d+ seconds?)?$').hasMatch(action)) {
         await execute(action);
         return;
       }
-      await _askToRepeat();
+      await _askToRepeat(heard: transcript);
       return;
     }
     final device = selected;

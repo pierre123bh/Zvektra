@@ -29,6 +29,19 @@ void main() {
         parse('camera 2 November 15 from 12pm to 1210 pm'));
   });
 
+  test('accepts typical Android transcriptions for a playback request', () {
+    final expected = (camera: 2, start: DateTime(2026, 11, 15, 12),
+      end: DateTime(2026, 11, 15, 12, 10));
+    for (final transcript in [
+      'Camera 2 November fifteenth from 12 p.m. to 12:10 p.m.',
+      'Camera to November 15 from 12p.m. to 1210 p.m.',
+      'Camera two November 15 from twelve PM to twelve ten PM.',
+    ]) {
+      expect(parse(transcript), expected, reason: transcript);
+    }
+    expect(parse('live camera to'), isNull);
+  });
+
   test('interprets Lebanese time and mixed commands', () {
     final expected = (camera: 2, start: DateTime(2026, 11, 16, 12),
       end: DateTime(2026, 11, 16, 12, 5));

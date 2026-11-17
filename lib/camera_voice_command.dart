@@ -88,7 +88,21 @@ String _normalize(String input) {
 DateTime? _voiceDate(String text, DateTime now) {
   if (text == 'today') return DateTime(now.year, now.month, now.day);
   if (text == 'yesterday') return DateTime(now.year, now.month, now.day - 1);
-  final formatted = text.replaceAllMapped(RegExp(r'\b(\d{1,2})(?:st|nd|rd|th)\b'), (m) => m[1]!)
+  const ordinalDays = {
+    'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5',
+    'sixth': '6', 'seventh': '7', 'eighth': '8', 'ninth': '9', 'tenth': '10',
+    'eleventh': '11', 'twelfth': '12', 'thirteenth': '13', 'fourteenth': '14',
+    'fifteenth': '15', 'sixteenth': '16', 'seventeenth': '17',
+    'eighteenth': '18', 'nineteenth': '19', 'twentieth': '20', 'thirtieth': '30',
+  };
+  final formatted = text
+      .replaceAllMapped(RegExp(r'\b(?:(20|30)[ -])?([a-z]+)\b'), (m) {
+        final day = ordinalDays[m[2]];
+        if (day == null) return m[0]!;
+        final tens = int.parse(m[1] ?? '0');
+        return '${tens + int.parse(day)}';
+      })
+      .replaceAllMapped(RegExp(r'\b(\d{1,2})(?:st|nd|rd|th)\b'), (m) => m[1]!)
       .replaceAllMapped(RegExp(r'[a-z]+'),
       (m) => m[0]![0].toUpperCase() + m[0]!.substring(1));
   for (final pattern in ['MMMM d yyyy', 'd MMMM yyyy', 'yyyy-MM-dd', 'd/M/yyyy']) {
@@ -127,8 +141,6 @@ CameraVoiceCommand? parseCameraVoiceCommand(String transcript, DateTime now) {
   final text = _normalize(transcript)
       .replaceFirst(RegExp(r'^(?:can|could|would) you '), '')
       .replaceAll(RegExp(r'\b(?:please|me|the|on|at|for)\b'), ' ')
-      .replaceAllMapped(RegExp(r'\b(from|to)\s+(\d{1,2})(\d{2})(?=\s*(?:[ap]m\b|to\b|$))'),
-          (m) => '${m[1]} ${m[2]}:${m[3]}')
       .replaceAll(RegExp(r'\s+'), ' ').trim();
   final live = RegExp(
     r'^(?:(?:show|open|play|view)\s+)*(?:live\s+cam\s+(\d{1,3})|cam\s+(\d{1,3})\s+live)$',
@@ -137,10 +149,19 @@ CameraVoiceCommand? parseCameraVoiceCommand(String transcript, DateTime now) {
     final camera = int.parse(live[1] ?? live[2]!);
     return camera == 0 ? null : (camera: camera, start: null, end: null);
   }
+  final playbackText = text
+      .replaceAllMapped(RegExp(r'(^|[\s\d])([ap])\s*\.\s*m\.?(?=\s|$)'),
+          (m) => '${m[1]}${m[2]}m')
+      .replaceAllMapped(RegExp(r'\b(from|to)\s+(\d{1,2})(\d{2})(?=\s*(?:[ap]m\b|to\b|$))'),
+          (m) => '${m[1]} ${m[2]}:${m[3]}')
+      .replaceAllMapped(
+        RegExp(r'^((?:show |open |play |playback |watch )*cam )(to|too)\s+(?=.+\bfrom\b)'),
+        (m) => '${m[1]}2 ',
+      );
   final playback = RegExp(
     r'^(?:(?:show|open|play|playback|watch)\s+)*cam\s+(\d{1,3})'
     r'(?:\s+playback)?(?:\s+(.+?))?\s+from\s+(.+?)\s+to\s+(.+)$',
-  ).firstMatch(text);
+  ).firstMatch(playbackText);
   if (playback == null) return null;
   final camera = int.parse(playback[1]!);
   if (camera == 0) return null;

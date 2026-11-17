@@ -66,7 +66,7 @@ class AndroidSpeechVoice(
                                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                                 // Playback commands often include pauses between the camera, date and time.
                                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
-                                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 4)
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale)
                                 if (Build.VERSION.SDK_INT >= 34) {
                                     putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true)
@@ -186,12 +186,16 @@ class AndroidSpeechVoice(
 
     override fun onResults(results: Bundle?) {
         listening = false
-        val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            ?.firstOrNull().orEmpty()
+        val candidates = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+        val text = candidates.firstOrNull().orEmpty()
         if (text.isNotBlank()) {
             val confidence = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
                 ?.firstOrNull()?.toDouble()
-            channel.invokeMethod("recognized", mapOf("text" to text, "confidence" to confidence))
+            channel.invokeMethod("recognized", mapOf(
+                "text" to text,
+                "confidence" to confidence,
+                "alternatives" to candidates.drop(1)
+            ))
         } else {
             channel.invokeMethod("speechError", "No speech detected")
         }

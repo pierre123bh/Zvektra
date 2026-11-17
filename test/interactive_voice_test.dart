@@ -43,9 +43,10 @@ void main() {
       messenger.setMockMethodCallHandler(permission, null);
     });
 
-    Future<void> recognized(String text, double confidence) async {
+    Future<void> recognized(String text, double confidence,
+        [List<String> alternatives = const []]) async {
       final ByteData message = codec.encodeMethodCall(
-        MethodCall('recognized', {'text': text, 'confidence': confidence}),
+        MethodCall('recognized', {'text': text, 'confidence': confidence, 'alternatives': alternatives}),
       );
       await messenger.handlePlatformMessage(voice.name, message, (_) {});
       await tester.pump();
@@ -82,7 +83,17 @@ void main() {
 
     await tester.tap(find.byTooltip('Voice'));
     await tester.pump();
-    await recognized('playback camera three November 15 2024 from 12 pm to 12:06 pm', 0.95);
+    await recognized('camera three', 0.3, [
+      'camera three November fifteenth 2024 from 12 p.m. to 12:06 p.m.',
+      'camera three November fifteenth 2024 from 12 p.m. to 12:07 p.m.',
+    ]);
+    expect(store.connectionAttempts, 1);
+
+    await tester.tap(find.byTooltip('Voice'));
+    await tester.pump();
+    await recognized('camera three', 0.3, [
+      'camera three November fifteenth 2024 from 12 p.m. to 12:06 p.m.',
+    ]);
     expect(find.text('Cam 3'), findsOneWidget);
     expect(find.text('15 Nov 2024'), findsOneWidget);
     expect(store.connectionAttempts, 2);
