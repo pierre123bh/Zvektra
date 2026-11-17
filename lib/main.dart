@@ -1254,7 +1254,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     _commandFeedback('Command not understood. Try “playback cam 1 yesterday from 12:00 to 12:05”.');
   }
   bool _showCommands = false;
-  DateTime _playbackDate = DateTime.now().subtract(const Duration(days: 1));
+  DateTime _playbackDate = DateUtils.dateOnly(DateTime.now());
   TimeOfDay _playbackFrom = const TimeOfDay(hour: 12, minute: 0);
   TimeOfDay _playbackTo = const TimeOfDay(hour: 13, minute: 0);
 
