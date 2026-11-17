@@ -1,0 +1,35 @@
+name: Publish verified Labeled Controls APK
+on:
+  push:
+    branches: [delivery/labeled-controls-f4f0cae]
+    paths: [.github/workflows/deliver-labeled-controls-apk.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_SHA: f4f0cae709f298e86a5eab5b314bc713ca361faf
+      BUILD_RUN: '44142358000'
+      SMOKE_RUN: '44142357934'
+      RELEASE_TAG: labeled-controls-f4f0cae
+    steps:
+      - name: Verify Android checks and publish the APK
+        run: |
+          set -euo pipefail
+          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
+            gh api "repos/$GH_REPO/actions/runs/$run" \
+              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
+            gh run watch "$run" --exit-status --interval 15
+          done
+          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
+          cd dist
+          sha256sum --check Zvektra-ARM64.apk.sha256
+          gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
+            --target "$BUILD_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Labeled Controls" \
+            --notes "ARM64 Android APK from a verified build. Adds visible labels beneath playback and voice controls."
