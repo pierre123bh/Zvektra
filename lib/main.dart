@@ -541,6 +541,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   static const _snapshotLimit = 200;
   RecordingAnalysis? _analysis;
   bool _showAnalysis = false;
+  bool _showClipActions = false;
   final _detections = <PlaybackDetection>[];
   Timer? _detectionTimer;
   int _detectionSession = 0;
@@ -660,6 +661,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _analysis = analysisFilter == null || start == null || end == null
           ? null : RecordingAnalysis(start, end, analysisFilter, target.id, cameraNumber);
       _showAnalysis = _analysis != null;
+      _showClipActions = false;
     }
     final capture = _snapshotInFlight;
     if (capture != null) {
@@ -1040,10 +1042,12 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     });
   }
 
-  bool _savingClip = false;
+  final _savingClips = <RecordingEvent>{};
+  Future<void>? _lastClipSave;
 
-  Future<void> _saveRecordingClip(RecordingAnalysis analysis, DateTime moment) async {
-    if (_savingClip) return;
+  Future<void> _saveRecordingClip(RecordingAnalysis analysis, RecordingEvent event) async {
+    if (_savingClips.contains(event)) return;
+    final moment = event.first.timestamp;
     final device = widget.store.devices.where((item) => item.id == analysis.deviceId).firstOrNull;
     if (device == null) {
       _commandFeedback('The device for this recording is unavailable.');
@@ -1055,8 +1059,14 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       _commandFeedback('This event is too close to the end of the recording.');
       return;
     }
-    setState(() => _savingClip = true);
+    final previous = _lastClipSave;
+    final completed = Completer<void>();
+    _lastClipSave = completed.future;
+    setState(() => _savingClips.add(event));
+    if (previous != null) _commandFeedback('Clip queued.');
     try {
+      await previous;
+      if (!mounted) return;
       const gallery = MethodChannel('net.zvektra/snapshot_gallery');
       final needsPermission = await gallery.invokeMethod<bool>('requiresStoragePermission');
       if (!mounted) return;
@@ -1074,25 +1084,44 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         _commandFeedback('Edit the device and enter its password.');
         return;
       }
-      Future<void> export({required bool fallback}) async {
+      Future<bool> export({required bool fallback, bool videoOnly = false}) async {
         final source = StreamBuilderService.url(device, analysis.camera,
             start: range.start, end: range.end, password: password, topcamFallback: fallback);
         if (source == null) throw const FormatException('Recording export unavailable');
         const clips = MethodChannel('net.zvektra/clip_gallery');
-        await clips.invokeMethod<void>('save', {'source': source, 'seconds': seconds});
+        return await clips.invokeMethod<bool>('save', {
+          'source': source, 'seconds': seconds, 'videoOnly': videoOnly,
+        }) ?? false;
       }
       _commandFeedback('Saving video clip…');
-      try {
-        await export(fallback: false);
-      } on PlatformException {
-        if (device.manufacturer != 'Topcam' || !mounted) rethrow;
-        await export(fallback: true);
+      Future<bool> trySource({required bool fallback}) async {
+        try {
+          return await export(fallback: fallback);
+        } on PlatformException catch (error) {
+          if (error.code != 'NO_PLAYABLE_CLIP' || !mounted) rethrow;
+          return export(fallback: fallback, videoOnly: true);
+        }
       }
-      _commandFeedback('Video clip saved to your gallery.');
+      bool shortened;
+      try {
+        shortened = await trySource(fallback: false);
+      } on PlatformException catch (error) {
+        if (error.code != 'NO_PLAYABLE_CLIP' || device.manufacturer != 'Topcam' || !mounted) rethrow;
+        shortened = await trySource(fallback: true);
+      }
+      _commandFeedback(shortened
+          ? 'A shorter video clip was saved to your gallery.'
+          : 'Video clip saved to your gallery.');
+    } on PlatformException catch (error) {
+      _commandFeedback(error.code == 'NO_PLAYABLE_CLIP'
+          ? 'The recorder did not return a playable video clip.'
+          : 'Could not save the video clip to your gallery.');
     } on Exception {
       _commandFeedback('Could not save the video clip. Try again.');
     } finally {
-      if (mounted) setState(() => _savingClip = false);
+      completed.complete();
+      if (identical(_lastClipSave, completed.future)) _lastClipSave = null;
+      if (mounted) setState(() => _savingClips.remove(event));
     }
   }
 
@@ -1543,11 +1572,14 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
                 width: width, label: 'Commands', icon: Icons.keyboard,
                 onPressed: () => setState(() => _showCommands = !_showCommands),
               ),
-              if (analysis != null && !analyzing && !_showAnalysis)
+              if (analysis != null && !analyzing && (!_showAnalysis || !_showClipActions))
                 _PlaybackAction(
                   width: width, label: 'Results', icon: Icons.list_alt,
                   tooltip: 'Recording analysis results',
-                  onPressed: () => setState(() => _showAnalysis = true),
+                  onPressed: () => setState(() {
+                    _showAnalysis = true;
+                    _showClipActions = true;
+                  }),
                 ),
               if (bounds.maxHeight < 345 && _detections.isNotEmpty)
                 _PlaybackAction(
@@ -1583,7 +1615,9 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
               onStop: () => _finishRecordingAnalysis('Analysis stopped. Results are partial.'),
               onClose: () => setState(() => _showAnalysis = false),
               onOpen: (moment) => unawaited(_openRecordingEvent(analysis, moment)),
-              onSaveClip: _savingClip ? null : (moment) => unawaited(_saveRecordingClip(analysis, moment)),
+              onSaveClip: !_showClipActions || analysis.running
+                  ? null : (event) => unawaited(_saveRecordingClip(analysis, event)),
+              savingClips: _savingClips,
             ),
         ]),
       )),

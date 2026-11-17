@@ -81,13 +81,15 @@ class RecordingAnalysisResults extends StatelessWidget {
     required this.onClose,
     required this.onOpen,
     this.onSaveClip,
+    this.savingClips = const {},
   });
 
   final RecordingAnalysis analysis;
   final VoidCallback onStop;
   final VoidCallback onClose;
   final ValueChanged<DateTime> onOpen;
-  final ValueChanged<DateTime>? onSaveClip;
+  final ValueChanged<RecordingEvent>? onSaveClip;
+  final Set<RecordingEvent> savingClips;
 
   @override
   Widget build(BuildContext context) {
@@ -130,10 +132,10 @@ class RecordingAnalysisResults extends StatelessWidget {
                           child: Image.memory(detection.snapshot, fit: BoxFit.contain)),
                         title: Text(label),
                         subtitle: Text(first == last ? first : '$first–$last'),
-                        trailing: TextButton.icon(
-                          onPressed: onSaveClip == null ? null : () => onSaveClip!(detection.timestamp),
+                        trailing: onSaveClip == null ? const Icon(Icons.play_arrow) : TextButton.icon(
+                          onPressed: savingClips.contains(event) ? null : () => onSaveClip!(event),
                           icon: const Icon(Icons.video_file_outlined, size: 18),
-                          label: const Text('Save clip'),
+                          label: Text(savingClips.contains(event) ? 'Saving…' : 'Save clip'),
                         ),
                         onTap: () => onOpen(detection.timestamp),
                       );

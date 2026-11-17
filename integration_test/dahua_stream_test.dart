@@ -223,6 +223,7 @@ void main() {
     expect(analysisFinder, findsOneWidget, reason: tester.widgetList<Text>(find.byType(Text))
         .map((text) => text.data).whereType<String>().join(' | '));
     expect(find.text('Analyzing recording'), findsOneWidget);
+    expect(find.text('Save clip'), findsNothing);
     for (var attempt = 0; attempt < 90; attempt++) {
       await tester.pump(const Duration(milliseconds: 400));
       final timeline = tester.widget<RecordingAnalysisResults>(analysisFinder).analysis;
@@ -237,6 +238,9 @@ void main() {
     await tester.tap(find.text('Stop'));
     await tester.pump();
     expect(find.textContaining('Results are partial'), findsOneWidget);
+    expect(find.text('Save clip'), findsNothing);
+    await tester.tap(find.byTooltip('Recording analysis results'));
+    await tester.pump();
     final saveClip = find.ancestor(of: find.text('Save clip').first,
         matching: find.byWidgetPredicate((widget) => widget is TextButton)).first;
     await tester.ensureVisible(saveClip);
@@ -244,10 +248,15 @@ void main() {
     final exportButton = tester.widget<TextButton>(saveClip);
     expect(exportButton.onPressed, isNotNull);
     exportButton.onPressed!();
-    final clipSaved = find.text('Video clip saved to your gallery.');
+    await tester.pump();
+    expect(find.text('Saving…'), findsOneWidget);
+    expect(tester.widgetList<TextButton>(find.ancestor(of: find.text('Save clip'),
+        matching: find.byWidgetPredicate((widget) => widget is TextButton)))
+        .any((button) => button.onPressed != null), isTrue);
+    final clipSaved = find.textContaining('saved to your gallery.');
     for (var attempt = 0; attempt < 105 && clipSaved.evaluate().isEmpty; attempt++) {
       await tester.pump(const Duration(milliseconds: 400));
-      if (find.text('Could not save the video clip. Try again.').evaluate().isNotEmpty) break;
+      if (find.text('The recorder did not return a playable video clip.').evaluate().isNotEmpty) break;
     }
     expect(clipSaved, findsOneWidget, reason: 'Export the RTSP interval as a playable MP4 in MediaStore');
     final event = analysis.events.first.first;

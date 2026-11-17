@@ -47,13 +47,14 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
                     seconds == null || seconds !in 1..15) {
                     result.error("INVALID_CLIP", null, null)
                 } else {
-                    worker.post { start(source, seconds, result) }
+                    val videoOnly = call.argument<Boolean>("videoOnly") == true
+                    worker.post { start(source, seconds, videoOnly, result) }
                 }
             }
         }
     }
 
-    private fun start(source: Uri, seconds: Int, result: MethodChannel.Result) {
+    private fun start(source: Uri, seconds: Int, videoOnly: Boolean, result: MethodChannel.Result) {
         if (job != null) {
             result.error("BUSY", null, null)
             return
@@ -70,6 +71,7 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
             try {
                 media.addOption(":sout=#std{access=file,mux=mp4,dst=${export.file.absolutePath}}")
                 media.addOption(":stop-time=$seconds")
+                if (videoOnly) media.addOption(":no-sout-audio")
                 player.media = media
             } finally {
                 media.release()
@@ -77,14 +79,14 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
             player.setEventListener { event ->
                 when (event.type) {
                     MediaPlayer.Event.EndReached -> worker.post { finish(export, true) }
-                    MediaPlayer.Event.EncounteredError -> worker.post { finish(export, false) }
+                    MediaPlayer.Event.EncounteredError -> worker.post { finish(export, true) }
                     MediaPlayer.Event.TimeChanged -> if (event.timeChanged >= seconds * 1000L) {
                         worker.post { finish(export, true) }
                     }
                 }
                 Unit
             }
-            export.timeout = Runnable { finish(export, false) }.also {
+            export.timeout = Runnable { finish(export, true) }.also {
                 worker.postDelayed(it, (seconds + 25) * 1000L)
             }
             player.play()
@@ -93,7 +95,7 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
         }
     }
 
-    private fun finish(export: Export, completed: Boolean) {
+    private fun finish(export: Export, keepVideo: Boolean) {
         if (job !== export) return
         job = null
         export.timeout?.let(worker::removeCallbacks)
@@ -104,12 +106,17 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
         }
         runCatching { export.vlc?.release() }
         try {
-            if (!completed || !validVideo(export)) throw IOException("Incomplete clip")
+            val duration = if (keepVideo) videoDuration(export.file) else 0L
+            if (duration !in 400L..((export.seconds + 2) * 1000L)) {
+                export.result.error("NO_PLAYABLE_CLIP", null, null)
+                return
+            }
+            val shortened = duration < (export.seconds - 2) * 1000L
             if (Build.VERSION.SDK_INT >= 29) {
                 saveModern(export.file)
-                export.result.success(null)
+                export.result.success(shortened)
             } else {
-                saveLegacy(export.file, export.result)
+                saveLegacy(export.file, shortened, export.result)
             }
         } catch (_: Exception) {
             export.result.error("CLIP_EXPORT_FAILED", null, null)
@@ -118,16 +125,16 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
         }
     }
 
-    private fun validVideo(export: Export): Boolean {
-        if (export.file.length() == 0L) return false
+    private fun videoDuration(file: File): Long {
+        if (file.length() == 0L) return 0
         val metadata = MediaMetadataRetriever()
         return try {
-            metadata.setDataSource(export.file.absolutePath)
+            metadata.setDataSource(file.absolutePath)
             val duration = metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 ?.toLongOrNull() ?: 0
-            val minimum = ((export.seconds - 2) * 1000L).coerceAtLeast(400L)
-            metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes" &&
-                duration in minimum..((export.seconds + 2) * 1000L)
+            if (metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes") duration else 0L
+        } catch (_: Exception) {
+            0L
         } finally {
             metadata.release()
         }
@@ -157,7 +164,7 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
     }
 
     @Suppress("DEPRECATION")
-    private fun saveLegacy(file: File, result: MethodChannel.Result) {
+    private fun saveLegacy(file: File, shortened: Boolean, result: MethodChannel.Result) {
         val movies = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
         val album = File(movies, "Zvektra")
         if (!album.isDirectory && !album.mkdirs()) throw IOException("Could not create album")
@@ -169,7 +176,7 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
                     destination.delete()
                     result.error("CLIP_EXPORT_FAILED", null, null)
                 } else {
-                    result.success(null)
+                    result.success(shortened)
                 }
             }
         } catch (error: Exception) {
