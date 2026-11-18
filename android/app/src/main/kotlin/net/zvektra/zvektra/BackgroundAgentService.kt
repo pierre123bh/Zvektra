@@ -155,7 +155,8 @@ class BackgroundAgentService : Service() {
     }
 
     private fun finish(result: BackgroundRecording.Result) {
-        val count = if (result.saved == 1) "1 clip saved." else result.saved.toString() + " clips saved."
+        val noun = if (result.images) "image" else "clip"
+        val count = "${result.saved} $noun${if (result.saved == 1) "" else "s"} saved."
         val outcome = when {
             cancelled -> "Background analysis stopped."
             result.partial -> "Background analysis incomplete."

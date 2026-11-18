@@ -1,6 +1,7 @@
 package net.zvektra.zvektra
 
-import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import java.io.ByteArrayOutputStream
 import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaMetadataRetriever
@@ -31,7 +32,7 @@ internal class BackgroundRecording(
     private val cancelled: () -> Boolean,
     private val progress: (String, Int) -> Unit,
 ) {
-    data class Result(val saved: Int, val partial: Boolean, val details: String? = null)
+    data class Result(val saved: Int, val partial: Boolean, val details: String? = null, val images: Boolean = false)
     private var saved = 0
     private var nativeTransfer = ""
 
@@ -197,6 +198,7 @@ internal class BackgroundRecording(
     }
 
 
+
     private fun scanHistoricalFrames(source: String, port: Int, start: Long, length: Long,
                                      camera: Int, timezone: String): Result {
         val began = SystemClock.elapsedRealtime()
@@ -204,88 +206,120 @@ internal class BackgroundRecording(
         val credentials = uri.encodedUserInfo?.split(':', limit = 2)
         val host = uri.host
         if (host == null || credentials?.size != 2) {
-            return Result(0, true, "Port 2 historical scan needs a valid recorder address and login.")
+            return Result(0, true, "Port 2 motion search needs a valid recorder address and login.", images = true)
         }
+        var stage = "querying motion recordings"
         var frames = 0
-        var bytes = 0L
-        var detectionMs = 0L
-        val offsets = mutableListOf<Long>()
-        val plateWorker = Executors.newSingleThreadExecutor()
-        var stage = "requesting historical frames"
+        var failed = 0
+        var duplicates = 0
+        var analysisMs = 0L
+        val signatures = mutableListOf<IntArray>()
         try {
-            val error = PlaybackDetector(context).use { detector ->
-                DahuaNativeDownload.scan(host, port, Uri.decode(credentials[0]), Uri.decode(credentials[1]),
-                    camera, start, start + length, timezone, cancelled) { timestamp, jpeg ->
-                    bytes += jpeg.size
-                    val frame = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
-                        ?: throw IOException("Historical snapshot could not be decoded")
-                    try {
-                        stage = "analyzing historical frames"
-                        val detectionStarted = SystemClock.elapsedRealtime()
-                        val detected = detector.detectKinds(frame, plateWorker).isNotEmpty()
-                        detectionMs += SystemClock.elapsedRealtime() - detectionStarted
-                        val offset = timestamp - start
-                        if (detected && (offsets.isEmpty() || offset - offsets.last() >= 15_000L)) {
-                            offsets.add(offset)
-                        }
-                        frames++
-                        progress("Scanning historical images: $frames received · ${bytes / 1024} KiB",
-                            (offset * 80 / length).toInt().coerceIn(0, 80))
-                    } finally {
-                        frame.recycle()
-                    }
-                    stage = "requesting historical frames"
-                    !cancelled()
-                }
+            progress("Querying motion recordings through Port 2", 0)
+            val records = DahuaNativeDownload.motion(host, port, Uri.decode(credentials[0]),
+                Uri.decode(credentials[1]), camera, start, start + length, timezone, cancelled)
+            val intervals = mutableListOf<Pair<Long, Long>>()
+            for (record in records.sortedBy { it[0] }) {
+                val last = intervals.lastOrNull()
+                if (last != null && record[0] <= last.second) {
+                    intervals[intervals.lastIndex] = last.first to maxOf(last.second, record[1])
+                } else intervals.add(record[0] to record[1])
             }
-            val scanMs = SystemClock.elapsedRealtime() - began
-            if (cancelled()) return Result(saved, true,
-                "Port 2 image scan stopped. $frames images, $bytes bytes.")
-            stage = "downloading detected clips"
-            val clipStarted = SystemClock.elapsedRealtime()
-            var failed = 0
+            val queryMs = SystemClock.elapsedRealtime() - began
+            if (intervals.isEmpty()) return Result(0, cancelled(),
+                "Port 2 motion query: 0 motion recording intervals. Query ${seconds(queryMs)}.", images = true)
             val formatter = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).apply {
                 timeZone = TimeZone.getTimeZone(timezone)
             }
-            for ((index, offset) in offsets.withIndex()) {
-                if (cancelled()) break
-                progress("Downloading detected clips (${index + 1} of ${offsets.size})",
-                    80 + index * 19 / offsets.size)
-                val from = maxOf(0L, offset - 5000)
-                val to = minOf(length, offset + 10_000)
-                val file = File.createTempFile("background-recording-", ".mp4", context.cacheDir)
-                try {
-                    val duration = tryDownload(uri, port, file, start + from, to - from,
-                        camera, timezone, "Dahua")
-                    if (!coversRange(duration, to - from)) {
+            for ((index, interval) in intervals.withIndex()) {
+                var timestamp = interval.first
+                while (timestamp < interval.second && !cancelled()) {
+                    progress("Reading motion images: $frames sampled · $saved saved",
+                        ((timestamp - start) * 95 / length).toInt().coerceIn(0, 95))
+                    stage = "reading a short motion video sample"
+                    val sampleLength = minOf(3000L, start + length - timestamp)
+                    val file = File.createTempFile("background-recording-", ".mp4", context.cacheDir)
+                    try {
+                        val duration = tryDownload(uri, port, file, timestamp, sampleLength,
+                            camera, timezone, "Dahua")
+                        if (duration < 400 || cancelled()) {
+                            if (!cancelled()) failed++
+                        } else {
+                            val retriever = MediaMetadataRetriever()
+                            try {
+                                retriever.setDataSource(file.absolutePath)
+                                val frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_NEXT_SYNC)
+                                    ?: throw IOException("Motion sample has no decoded image")
+                                try {
+                                    frames++
+                                    stage = "filtering and saving motion images"
+                                    val analysisStarted = SystemClock.elapsedRealtime()
+                                    val signature = motionSignature(frame)
+                                    val similar = signatures.any { previous ->
+                                        var difference = 0L
+                                        for (pixel in signature.indices) difference +=
+                                            kotlin.math.abs(signature[pixel] - previous[pixel])
+                                        difference < signature.size * 3L
+                                    }
+                                    if (similar) {
+                                        duplicates++
+                                    } else {
+                                        val jpeg = ByteArrayOutputStream().use { output ->
+                                            if (!frame.compress(Bitmap.CompressFormat.JPEG, 90, output)) {
+                                                throw IOException("Could not encode motion image")
+                                            }
+                                            output.toByteArray()
+                                        }
+                                        publishSnapshot(context,
+                                            "Zvektra-${formatter.format(Date(timestamp))}-Cam$camera-Motion-$index.jpg", jpeg)
+                                        signatures.add(signature)
+                                        saved++
+                                    }
+                                    analysisMs += SystemClock.elapsedRealtime() - analysisStarted
+                                } finally {
+                                    frame.recycle()
+                                }
+                            } finally {
+                                retriever.release()
+                            }
+                        }
+                    } catch (_: Exception) {
                         failed++
-                        continue
+                    } finally {
+                        file.delete()
                     }
-                    saveClip(file, "Zvektra-${formatter.format(Date(start + offset))}-Cam$camera-Event.mp4",
-                        0, minOf(duration, to - from))
-                    saved++
-                } catch (_: Exception) {
-                    failed++
-                } finally {
-                    file.delete()
+                    timestamp += 5000L
                 }
+                if (cancelled()) break
             }
-            val details = buildString {
-                append("Port 2 historical images. $frames images, $bytes bytes. ")
-                append("Retrieve ${seconds((scanMs - detectionMs).coerceAtLeast(0))} · ")
-                append("Analyze ${seconds(detectionMs)} · Clips ${seconds(SystemClock.elapsedRealtime() - clipStarted)} · ")
-                append("Total ${seconds(SystemClock.elapsedRealtime() - began)}. 5s sampling can miss brief events.")
-                if (error != null) append(" $error.")
-                if (failed > 0) append(" $failed clips could not be saved.")
-            }
-            return Result(saved, error != null || failed > 0 || cancelled(), details)
+            return Result(saved, cancelled() || failed > 0,
+                "Port 2 motion images. ${intervals.size} motion recording intervals. " +
+                "$frames images sampled, $duplicates similar images skipped, $failed samples failed. " +
+                "Query ${seconds(queryMs)} · Filter/save ${seconds(analysisMs)} · " +
+                "Total ${seconds(SystemClock.elapsedRealtime() - began)}. " +
+                "5s sampling uses temporary video samples of up to 3s. Image times are requested recording times.",
+                images = true)
         } catch (error: Exception) {
-            return Result(saved, true, "Port 2 stopped while $stage (${error.javaClass.simpleName}). " +
-                "$frames historical images received, $bytes bytes.")
+            return Result(saved, true, "Port 2 failed while $stage: ${error.message ?: error.javaClass.simpleName}.",
+                images = true)
         } catch (error: LinkageError) {
-            return Result(saved, true, "Port 2 historical images unavailable (${error.javaClass.simpleName}).")
+            return Result(saved, true, "Port 2 motion query unavailable (${error.javaClass.simpleName}).", images = true)
+        }
+    }
+
+    private fun motionSignature(frame: Bitmap): IntArray {
+        val thumbnail = Bitmap.createScaledBitmap(frame, 32, 18, true)
+        try {
+            val pixels = IntArray(32 * 18)
+            thumbnail.getPixels(pixels, 0, 32, 0, 0, 32, 18)
+            for (i in pixels.indices) {
+                val color = pixels[i]
+                pixels[i] = (((color shr 16) and 255) * 77 +
+                    ((color shr 8) and 255) * 150 + (color and 255) * 29) shr 8
+            }
+            return pixels
         } finally {
-            plateWorker.shutdown()
+            if (thumbnail !== frame) thumbnail.recycle()
         }
     }
 
