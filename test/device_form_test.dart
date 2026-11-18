@@ -5,6 +5,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zvektra/main.dart';
 
 void main() {
+  test('existing device settings retain their RTSP port', () {
+    final device = Nvr.fromJson({
+      'id': 'shop', 'name': 'Shop', 'manufacturer': 'Dahua',
+      'port': '1554', 'username': 'viewer', 'maxChannels': 8,
+    });
+    expect(device.port, '1554');
+    expect(device.port2, isNull);
+    expect(Uri.parse(StreamBuilderService.url(device, 1, password: 'fixture')!).port, 1554);
+  });
+
   testWidgets('failed save keeps the form open and retry persists the device',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -37,7 +47,7 @@ void main() {
     expect(find.text(host), findsNothing);
 
     final fields = find.byType(TextFormField);
-    for (final entry in ['Shop', '01554', '8', 'test user', 'test password'].indexed) {
+    for (final entry in ['Shop', '01554', '18080', '8', 'test user', 'test password'].indexed) {
       await tester.ensureVisible(fields.at(entry.$1));
       await tester.enterText(fields.at(entry.$1), entry.$2);
     }
@@ -56,6 +66,7 @@ void main() {
     await reloaded.load();
     expect(reloaded.devices.single.name, 'Shop');
     expect(reloaded.devices.single.port, '1554');
+    expect(reloaded.devices.single.port2, '18080');
     expect(await reloaded.password(reloaded.devices.single.id), 'test password');
   });
 }
