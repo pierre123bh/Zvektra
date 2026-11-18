@@ -18,12 +18,11 @@ jobs:
           SDK_URL: ${{ secrets.DAHUA_NETSDK_URL }}
         run: |
           if [ -z "$SDK_URL" ]; then
-            echo "::error::Set DAHUA_NETSDK_URL to a direct HTTPS download of the Dahua Android NetSDK archive."
-            exit 1
+            SDK_URL='https://depp.dahuasecurity.com/depp/support/download?id=146'
           fi
           archive="$RUNNER_TEMP/dahua.7z"
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-            --output "$archive" "$SDK_URL"
+            --max-time 180 --output "$archive" "$SDK_URL"
           echo "f359a827a035a33fa580fdb05c8fbe3441f4d7ca4b6b7a718c740cecd607df37  $archive" | sha256sum --check
           unpacked="$RUNNER_TEMP/dahua-unpacked"
           sdk="$RUNNER_TEMP/dahua-netsdk"
