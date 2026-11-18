@@ -15,6 +15,7 @@ import android.graphics.RectF
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.FloatBuffer
+import java.util.concurrent.ExecutorService
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -53,12 +54,17 @@ internal class PlaybackDetector(private val context: Context) : AutoCloseable {
         }
     }
 
-    fun detectKinds(frame: Bitmap): List<String> {
+    fun detectKinds(frame: Bitmap, plateWorker: ExecutorService): List<String> {
         val personModel = people ?: load("people").also { people = it }
         val plateModel = plates ?: load("plates").also { plates = it }
+        val plateResult = plateWorker.submit<Boolean> { platesIn(frame, plateModel).isNotEmpty() }
+        // Join the plate task even if person detection fails. Both tasks borrow
+        // the bitmap and the caller recycles it after this method returns.
+        val personResult = runCatching { peopleIn(frame, personModel).isNotEmpty() }
+        val plateDetected = plateResult.get()
         return buildList {
-            if (peopleIn(frame, personModel).isNotEmpty()) add("person")
-            if (platesIn(frame, plateModel).isNotEmpty()) add("licensePlate")
+            if (personResult.getOrThrow()) add("person")
+            if (plateDetected) add("licensePlate")
         }
     }
 

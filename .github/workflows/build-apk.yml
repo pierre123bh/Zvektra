@@ -1,5 +1,6 @@
 name: Build Zvektra Android APK
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main, "voice/offline-whisper"]

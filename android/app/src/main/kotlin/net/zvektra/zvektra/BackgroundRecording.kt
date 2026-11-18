@@ -21,6 +21,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
@@ -57,6 +58,7 @@ internal class BackgroundRecording(
             val retriever = MediaMetadataRetriever()
             val lastSeen = mutableMapOf<String, Long>()
             val events = mutableListOf<Pair<String, Long>>()
+            val plateWorker = Executors.newSingleThreadExecutor()
             var missingFrames = false
             try {
                 retriever.setDataSource(input.absolutePath)
@@ -80,7 +82,7 @@ internal class BackgroundRecording(
                             missingFrames = true
                         } else {
                             try {
-                                for (kind in detector.detectKinds(frame)) {
+                                for (kind in detector.detectKinds(frame, plateWorker)) {
                                     if (offset - (lastSeen[kind] ?: -4000L) > 3000) events.add(kind to offset)
                                     lastSeen[kind] = offset
                                 }
@@ -92,6 +94,7 @@ internal class BackgroundRecording(
                     }
                 }
             } finally {
+                plateWorker.shutdown()
                 retriever.release()
             }
 
@@ -117,7 +120,9 @@ internal class BackgroundRecording(
             }
             val savingMs = SystemClock.elapsedRealtime() - savingStarted
             val route = if (downloaded) "Port 2" else "Port 1 (RTSP)"
-            val details = "$route. Read ${seconds(acquisitionMs)} · Scan ${seconds(analysisMs)} · Save ${seconds(savingMs)}."
+            val fallback = if (!downloaded && downloadPort != null) " Port 2 fallback." else ""
+            val total = SystemClock.elapsedRealtime() - jobStarted
+            val details = "$route. Read ${seconds(acquisitionMs)} · Scan ${seconds(analysisMs)} · Save ${seconds(savingMs)} · Total ${seconds(total)}.$fallback"
             Log.i("BackgroundAgent", "Recording=$length ms. $details")
             return Result(saved, cancelled() || duration + 2000 < length || missingFrames || failed, details)
         } catch (_: Exception) {
@@ -149,13 +154,15 @@ internal class BackgroundRecording(
     private fun tryDownload(source: Uri, outputPort: Int, output: File, start: Long, length: Long,
                             camera: Int, timezone: String): Long {
         val raw = File.createTempFile("background-recording-", ".dav", context.cacheDir)
-        val budgetMs = (length / 6).coerceAtLeast(4000L)
+        // The target is end-to-end wall time, not a deadline for discarding
+        // usable footage and paying for a second acquisition at RTSP speed.
+        val budgetMs = (length / 2).coerceAtLeast(4000L)
         val deadline = SystemClock.elapsedRealtime() + budgetMs
         val stopFastPath = { cancelled() || SystemClock.elapsedRealtime() >= deadline }
         try {
             progress("Downloading recording through Port 2", 0)
             if (!DahuaRecordingDownload.save(source, outputPort, camera, start, length, timezone, raw, stopFastPath)) return 0L
-            if (stopFastPath()) return 0L
+            if (cancelled()) return 0L
             val readable = videoDuration(raw)
             if (readable >= 400) {
                 output.delete()
@@ -164,7 +171,7 @@ internal class BackgroundRecording(
             } else {
                 output.delete()
                 capture(Uri.fromFile(raw), output, length, videoOnly = true, local = true, stop = stopFastPath)
-                if (stopFastPath()) return 0L
+                if (cancelled()) return 0L
             }
             return videoDuration(output).takeIf { it >= 400 && it + 2000 >= length } ?: 0L
         } catch (_: Exception) {
@@ -203,13 +210,13 @@ internal class BackgroundRecording(
                 }
                 player.play()
                 var lastBytes = 0L
-                var idleSeconds = 0
-                while (!stop() && !done.await(1, TimeUnit.SECONDS)) {
+                var lastGrowth = SystemClock.elapsedRealtime()
+                while (!stop() && !done.await(if (local) 100 else 1000, TimeUnit.MILLISECONDS)) {
                     val bytes = file.length()
-                    idleSeconds = if (bytes > lastBytes) 0 else idleSeconds + 1
+                    if (bytes > lastBytes) lastGrowth = SystemClock.elapsedRealtime()
                     lastBytes = bytes
                     val elapsed = position.get()
-                    if ((!local && elapsed >= length) || idleSeconds >= 25 || context.cacheDir.usableSpace < 64L * 1024 * 1024) break
+                    if ((!local && elapsed >= length) || SystemClock.elapsedRealtime() - lastGrowth >= 25000 || context.cacheDir.usableSpace < 64L * 1024 * 1024) break
                     progress("Reading recording", (elapsed.coerceIn(0, length) * 45 / length).toInt())
                 }
             } finally {

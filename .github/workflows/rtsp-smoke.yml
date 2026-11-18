@@ -1,5 +1,6 @@
 name: Android streaming and playback detection smoke test
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main, "voice/offline-whisper"]

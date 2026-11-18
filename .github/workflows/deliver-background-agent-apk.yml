@@ -1,35 +1,32 @@
-name: Publish verified Background Agent Timing APK
+name: Publish verified Background Agent Speed APK
 on:
   push:
-    branches: [delivery/background-agent-timing-bb96b0e]
-    paths: [.github/workflows/deliver-background-agent-apk.yml]
+    branches: [delivery/background-agent-speed]
 permissions:
   actions: read
-  contents: write
+  contents: read
 jobs:
+  build:
+    uses: ./.github/workflows/build-apk.yml
+  smoke:
+    uses: ./.github/workflows/rtsp-smoke.yml
   publish:
+    needs: [build, smoke]
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      BUILD_SHA: bb96b0eac6f2fac5442a92408b985d21a42a121e
-      BUILD_RUN: '44278424591'
-      SMOKE_RUN: '44278424677'
-      RELEASE_TAG: background-agent-timing-bb96b0e
+      RELEASE_TAG: background-agent-speed-${{ github.run_id }}
     steps:
-      - name: Verify Android checks and publish the APK
+      - uses: actions/download-artifact@v4
+        with:
+          name: zvektra-android-arm64
+      - name: Verify checksum and publish the APK
         run: |
-          set -euo pipefail
-          for run in "$BUILD_RUN" "$SMOKE_RUN"; do
-            gh api "repos/$GH_REPO/actions/runs/$run" \
-              | jq -e --arg sha "$BUILD_SHA" '.head_sha == $sha'
-            gh run watch "$run" --exit-status --interval 15
-          done
-          gh run download "$BUILD_RUN" --name zvektra-android-arm64 --dir dist
-          cd dist
           sha256sum --check Zvektra-ARM64.apk.sha256
           gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
-            --target "$BUILD_SHA" --prerelease --latest=false \
-            --title "Zvektra Android — Background Agent" \
-            --notes "ARM64 Android APK from a verified build. Bounds Dahua Port 2 attempts and reports acquisition, detection, and export timings."
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Zvektra Android — Background Agent Speed" \
+            --notes "Verified ARM64 build with Background Agent acquisition and scanning changes."
