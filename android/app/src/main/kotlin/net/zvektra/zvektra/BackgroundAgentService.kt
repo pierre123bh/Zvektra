@@ -113,12 +113,15 @@ class BackgroundAgentService : Service() {
                 it.name.startsWith("background-recording-") || it.name.startsWith("background-clip-")
             }?.forEach { it.delete() }
             var lastUpdate = 0L
+            var shownProgress = 0
             val result = BackgroundRecording(applicationContext, { cancelled }) { message, percent ->
                 val now = android.os.SystemClock.elapsedRealtime()
                 if (now - lastUpdate >= 1000) {
                     lastUpdate = now
+                    shownProgress = maxOf(shownProgress, percent)
+                    val displayProgress = shownProgress
                     main.post {
-                        if (working && !cancelled) notifications.notify(WORK_NOTIFICATION, notification(message, percent))
+                        if (working && !cancelled) notifications.notify(WORK_NOTIFICATION, notification(message, displayProgress))
                     }
                 }
             }.run(sources, start, end - start, camera, timezone, downloadPort, recorderFamily)
