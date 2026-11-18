@@ -293,18 +293,24 @@ void main() {
     expect(await agent.invokeMethod<bool>('start', {
       ...agentRange,
       'sources': [downloadSource.toString()],
+      'end': DateTime(2024, 11, 15, 15, 2).millisecondsSinceEpoch,
       'downloadPort': 8085,
     }), isTrue);
-    for (var attempt = 0; attempt < 125; attempt++) {
+    for (var attempt = 0; attempt < 275; attempt++) {
       await tester.pump(const Duration(milliseconds: 400));
       agentStatus = await agent.invokeMapMethod<String, dynamic>('status');
       if (agentStatus?['running'] == false) break;
     }
     expect(agentStatus?['running'], isFalse);
     expect(agentStatus?['message'], predicate<String>((message) =>
-        RegExp(r'Background analysis finished\. [2-9] clips saved\.').hasMatch(message)),
+        RegExp(r'Background analysis finished\. [1-9][0-9]* clips saved\.').hasMatch(message)),
         reason: 'Port 2 must download, analyze and save clips without RTSP');
-    expect(agentStatus?['message'], contains('Port 2. Read'));
+    final result = agentStatus?['message'] as String;
+    debugPrint(result);
+    final readSeconds = RegExp(r'Port 2\. Read ([0-9.]+)s').firstMatch(result);
+    expect(readSeconds, isNotNull, reason: 'A two-minute DAV must finish through Port 2');
+    expect(double.parse(readSeconds!.group(1)!), lessThan(20),
+        reason: 'Local DAV remux must read faster than RTSP playback');
     debugPrint('ZVEKTRA_PLAYBACK_DETECTION_OK');
   });
 }

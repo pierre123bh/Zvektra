@@ -22,7 +22,7 @@ class Handler(BaseHTTPRequestHandler):
             or query.get("action") != ["startLoad"]
             or query.get("channel") != ["2"]
             or query.get("startTime") != ["2024-11-15 15:00:00"]
-            or query.get("endTime") != ["2024-11-15 15:00:16"]
+            or query.get("endTime") != ["2024-11-15 15:02:00"]
         ):
             self.send_error(404)
             return

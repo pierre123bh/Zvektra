@@ -82,8 +82,11 @@ jobs:
           done
       - name: Start Dahua Port 2 fixture
         run: |
-          ffmpeg -hide_banner -loglevel error -stream_loop 1 -i /tmp/playback.mp4 -c copy /tmp/download.mp4
-          python3 integration_test/dahua_download_fixture.py /tmp/download.mp4 &
+          ffmpeg -hide_banner -loglevel error -stream_loop 14 -i /tmp/playback.mp4 \
+            -c:v copy -an -f h264 /tmp/download.h264
+          python3 integration_test/make_dav_fixture.py /tmp/download.h264 /tmp/download.dav
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 /tmp/download.dav | grep -Fx h264
+          python3 integration_test/dahua_download_fixture.py /tmp/download.dav &
           for attempt in {1..15}; do
             if nc -z 127.0.0.1 8085; then break; fi
             sleep 1
