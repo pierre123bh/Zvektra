@@ -288,6 +288,7 @@ void main() {
         .hasMatch(agentStatus?['message'] as String? ?? ''), isTrue,
         reason: 'The native service must detect events and publish clips while Flutter is offscreen');
     expect(agentStatus?['message'], contains('Zvektra Port 1. Read'));
+    expect(agentStatus?['message'], matches(RegExp(r'8× (requested|could not be requested)\. Received')));
     // The RTSP port is intentionally unreachable for this second run.
     final downloadSource = Uri.parse(review.dataSource).replace(port: 8555);
     expect(await agent.invokeMethod<bool>('start', {

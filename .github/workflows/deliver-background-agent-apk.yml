@@ -1,7 +1,7 @@
-name: Publish verified Background Agent Ports APK
+name: Publish verified Background Agent 8x Test APK
 on:
   push:
-    branches: [delivery/background-agent-ports]
+    branches: [delivery/background-agent-fast8]
 permissions:
   actions: read
   contents: read
@@ -18,7 +18,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: background-agent-ports-${{ github.run_id }}
+      RELEASE_TAG: background-agent-fast8-${{ github.run_id }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -28,5 +28,5 @@ jobs:
           sha256sum --check Zvektra-ARM64.apk.sha256
           gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
             --target "$GITHUB_SHA" --prerelease --latest=false \
-            --title "Zvektra Android — Background Agent Ports" \
-            --notes "Verified ARM64 build with Background Agent updated Zvektra port labels and recorder routing."
+            --title "Zvektra Android — Background Agent 8x Test" \
+            --notes "Verified ARM64 build with Background Agent Dahua Port 1 speed and footage-coverage measurements."
