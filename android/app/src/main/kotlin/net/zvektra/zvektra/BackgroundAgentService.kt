@@ -160,8 +160,9 @@ class BackgroundAgentService : Service() {
             else -> "Background analysis finished."
         }
         val message = "$outcome $count"
-        saveStatus(false, message)
-        notifications.notify(DONE_NOTIFICATION, notification(message))
+        val summary = listOfNotNull(message, result.details).joinToString("\n")
+        saveStatus(false, summary)
+        notifications.notify(DONE_NOTIFICATION, notification(summary))
         if (cancelled) {
             stopSelf()
             return

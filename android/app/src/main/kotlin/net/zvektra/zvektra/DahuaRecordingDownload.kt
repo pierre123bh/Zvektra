@@ -52,6 +52,7 @@ internal object DahuaRecordingDownload {
                             ?: return false
                     }
                     200 -> {
+                        if (cancelled()) return false
                         val type = connection.contentType.orEmpty().lowercase(Locale.US)
                         if (type.startsWith("text/") || type.contains("json") || type.contains("xml")) return false
                         connection.inputStream.use { input ->

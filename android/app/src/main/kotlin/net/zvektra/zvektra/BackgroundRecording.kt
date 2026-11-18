@@ -8,6 +8,8 @@ import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.SystemClock
+import android.util.Log
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -27,7 +29,7 @@ internal class BackgroundRecording(
     private val cancelled: () -> Boolean,
     private val progress: (String, Int) -> Unit,
 ) {
-    data class Result(val saved: Int, val partial: Boolean)
+    data class Result(val saved: Int, val partial: Boolean, val details: String? = null)
     private var saved = 0
 
     fun run(sources: List<String>, start: Long, length: Long, camera: Int, timezone: String,
@@ -37,15 +39,20 @@ internal class BackgroundRecording(
         } catch (_: IOException) {
             return Result(0, true)
         }
+        val jobStarted = SystemClock.elapsedRealtime()
         try {
             var duration = if (downloadPort == null) 0L else
                 tryDownload(Uri.parse(sources.first()), downloadPort, input, start, length, camera, timezone)
-            if (duration < 400) {
+            val downloaded = duration >= 400
+            if (!downloaded) {
                 progress("Reading recording through Port 1", 0)
                 duration = capturePlayback(sources, input, length)
             }
-            if (cancelled() || duration < 400) return Result(saved, true)
+            if (cancelled() || duration < 400) return Result(saved, true,
+                if (downloadPort == null) null else "Port 2 and RTSP could not supply the recording.")
 
+            val acquisitionMs = SystemClock.elapsedRealtime() - jobStarted
+            val analysisStarted = SystemClock.elapsedRealtime()
             val available = minOf(duration, length)
             val retriever = MediaMetadataRetriever()
             val lastSeen = mutableMapOf<String, Long>()
@@ -53,11 +60,22 @@ internal class BackgroundRecording(
             var missingFrames = false
             try {
                 retriever.setDataSource(input.absolutePath)
+                val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                val largestSide = maxOf(width, height)
+                val scale = if (largestSide > 960) 960.0 / largestSide else 1.0
                 PlaybackDetector(context).use { detector ->
                     var offset = 0L
                     while (offset < available && !cancelled()) {
                         progress("Analyzing recording", 45 + (offset * 40 / available).toInt())
-                        val frame = retriever.getFrameAtTime(offset * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                        val timeUs = offset * 1000
+                        val option = MediaMetadataRetriever.OPTION_CLOSEST
+                        val scaled = if (Build.VERSION.SDK_INT >= 27 && scale < 1.0 && width > 0 && height > 0) {
+                            runCatching { retriever.getScaledFrameAtTime(timeUs, option,
+                                (width * scale).toInt().coerceAtLeast(1),
+                                (height * scale).toInt().coerceAtLeast(1)) }.getOrNull()
+                        } else null
+                        val frame = scaled ?: retriever.getFrameAtTime(timeUs, option)
                         if (frame == null) {
                             missingFrames = true
                         } else {
@@ -77,6 +95,8 @@ internal class BackgroundRecording(
                 retriever.release()
             }
 
+            val analysisMs = SystemClock.elapsedRealtime() - analysisStarted
+            val savingStarted = SystemClock.elapsedRealtime()
             val formatter = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).apply {
                 timeZone = TimeZone.getTimeZone(timezone)
             }
@@ -95,7 +115,11 @@ internal class BackgroundRecording(
                     failed = true
                 }
             }
-            return Result(saved, cancelled() || duration + 2000 < length || missingFrames || failed)
+            val savingMs = SystemClock.elapsedRealtime() - savingStarted
+            val route = if (downloaded) "Port 2" else "Port 1 (RTSP)"
+            val details = "$route. Read ${seconds(acquisitionMs)} · Scan ${seconds(analysisMs)} · Save ${seconds(savingMs)}."
+            Log.i("BackgroundAgent", "Recording=$length ms. $details")
+            return Result(saved, cancelled() || duration + 2000 < length || missingFrames || failed, details)
         } catch (_: Exception) {
             return Result(saved, true)
         } catch (_: LinkageError) {
@@ -104,6 +128,8 @@ internal class BackgroundRecording(
             input.delete()
         }
     }
+
+    private fun seconds(milliseconds: Long) = String.format(Locale.US, "%.1fs", milliseconds / 1000.0)
 
     private fun capturePlayback(sources: List<String>, input: File, length: Long): Long {
         for (source in sources) {
@@ -123,10 +149,13 @@ internal class BackgroundRecording(
     private fun tryDownload(source: Uri, outputPort: Int, output: File, start: Long, length: Long,
                             camera: Int, timezone: String): Long {
         val raw = File.createTempFile("background-recording-", ".dav", context.cacheDir)
+        val budgetMs = (length / 6).coerceAtLeast(4000L)
+        val deadline = SystemClock.elapsedRealtime() + budgetMs
+        val stopFastPath = { cancelled() || SystemClock.elapsedRealtime() >= deadline }
         try {
             progress("Downloading recording through Port 2", 0)
-            if (!DahuaRecordingDownload.save(source, outputPort, camera, start, length, timezone, raw, cancelled)) return 0L
-            if (cancelled()) return 0L
+            if (!DahuaRecordingDownload.save(source, outputPort, camera, start, length, timezone, raw, stopFastPath)) return 0L
+            if (stopFastPath()) return 0L
             val readable = videoDuration(raw)
             if (readable >= 400) {
                 output.delete()
@@ -134,17 +163,22 @@ internal class BackgroundRecording(
                 return readable.takeIf { it + 2000 >= length } ?: 0L
             } else {
                 output.delete()
-                capture(Uri.fromFile(raw), output, length, videoOnly = true, local = true)
+                capture(Uri.fromFile(raw), output, length, videoOnly = true, local = true, stop = stopFastPath)
+                if (stopFastPath()) return 0L
             }
             return videoDuration(output).takeIf { it >= 400 && it + 2000 >= length } ?: 0L
         } catch (_: Exception) {
             return 0L
         } finally {
             raw.delete()
+            if (!cancelled() && stopFastPath()) {
+                Log.i("BackgroundAgent", "Port 2 exceeded its $budgetMs ms acquisition budget")
+            }
         }
     }
 
-    private fun capture(source: Uri, file: File, length: Long, videoOnly: Boolean, local: Boolean = false) {
+    private fun capture(source: Uri, file: File, length: Long, videoOnly: Boolean,
+                        local: Boolean = false, stop: () -> Boolean = cancelled) {
         val vlc = LibVLC(context, arrayListOf("--rtsp-tcp", "--network-caching=1000"))
         try {
             val player = MediaPlayer(vlc)
@@ -170,7 +204,7 @@ internal class BackgroundRecording(
                 player.play()
                 var lastBytes = 0L
                 var idleSeconds = 0
-                while (!cancelled() && !done.await(1, TimeUnit.SECONDS)) {
+                while (!stop() && !done.await(1, TimeUnit.SECONDS)) {
                     val bytes = file.length()
                     idleSeconds = if (bytes > lastBytes) 0 else idleSeconds + 1
                     lastBytes = bytes
