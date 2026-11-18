@@ -2,9 +2,11 @@ package net.zvektra.zvektra
 
 import android.net.Uri
 import android.text.TextUtils
-import android.util.Xml
-import org.xmlpull.v1.XmlPullParser
+import org.w3c.dom.Element
+import javax.xml.parsers.DocumentBuilderFactory
 import java.io.File
+import java.io.StringReader
+import org.xml.sax.InputSource
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -50,24 +52,29 @@ internal object RecorderRecordingDownload {
             </CMSearchDescription>
         """.trimIndent()
         val playback = client.request("/ISAPI/ContentMgmt/search", search) { connection ->
-            val parser = Xml.newPullParser().apply { setInput(connection.inputStream, null) }
-            var matchedStart = ""
-            var matchedEnd = ""
-            var uri: String? = null
-            while (parser.eventType != XmlPullParser.END_DOCUMENT) {
-                if (parser.eventType == XmlPullParser.START_TAG) {
-                    when (parser.name) {
-                        "searchMatchItem" -> { matchedStart = ""; matchedEnd = ""; uri = null }
-                        "startTime" -> matchedStart = parser.nextText()
-                        "endTime" -> matchedEnd = parser.nextText()
-                        "playbackURI" -> uri = parser.nextText()
-                    }
+            val xmlText = connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                val buffer = CharArray(128 * 1024)
+                var count = 0
+                while (count < buffer.size) {
+                    val next = reader.read(buffer, count, buffer.size - count)
+                    if (next < 0) break
+                    count += next
                 }
-                if (parser.eventType == XmlPullParser.END_TAG && parser.name == "searchMatchItem" &&
-                    matchedStart == from && matchedEnd == to && uri?.startsWith("rtsp://") == true) {
+                if (count == buffer.size) return@request null
+                String(buffer, 0, count)
+            }
+            if (xmlText.contains("<!DOCTYPE", ignoreCase = true)) return@request null
+            val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+            val xml = factory.newDocumentBuilder().parse(InputSource(StringReader(xmlText)))
+            val matches = xml.getElementsByTagNameNS("*", "searchMatchItem")
+            for (index in 0 until matches.length) {
+                val match = matches.item(index) as? Element ?: continue
+                val rangeStart = match.getElementsByTagNameNS("*", "startTime").item(0)?.textContent
+                val rangeEnd = match.getElementsByTagNameNS("*", "endTime").item(0)?.textContent
+                val uri = match.getElementsByTagNameNS("*", "playbackURI").item(0)?.textContent?.trim()
+                if (rangeStart == from && rangeEnd == to && uri?.startsWith("rtsp://") == true) {
                     return@request uri
                 }
-                parser.next()
             }
             null
         } ?: return false
@@ -121,7 +128,6 @@ internal object RecorderRecordingDownload {
                         val bytes = body.toByteArray(Charsets.UTF_8)
                         connection.doOutput = true
                         connection.setRequestProperty("Content-Type", "application/xml; charset=UTF-8")
-                        connection.setFixedLengthStreamingMode(bytes.size)
                         connection.outputStream.use { it.write(bytes) }
                     }
                     when (connection.responseCode) {

@@ -165,6 +165,7 @@ internal class BackgroundRecording(
         } catch (error: Exception) {
             return Result(saved, true, "Stopped while $stage (${error.javaClass.simpleName}).")
         } catch (error: LinkageError) {
+            Log.e("BackgroundAgent", "Android library error while $stage", error)
             return Result(saved, true, "Stopped while $stage (${error.javaClass.simpleName}).")
         } finally {
             input.delete()
@@ -230,7 +231,11 @@ internal class BackgroundRecording(
                 if (cancelled()) return 0L
             }
             return videoDuration(output)
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.w("BackgroundAgent", "Download failed (${error.javaClass.simpleName})")
+            return 0L
+        } catch (error: LinkageError) {
+            Log.e("BackgroundAgent", "Android library error during download", error)
             return 0L
         } finally {
             raw.delete()
