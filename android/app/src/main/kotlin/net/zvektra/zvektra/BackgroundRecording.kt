@@ -47,14 +47,17 @@ internal class BackgroundRecording(
             val supportsDownload = recorderFamily == "Dahua" || recorderFamily == "Hikvision"
             var duration = if (downloadPort == null || !supportsDownload) 0L else
                 tryDownload(Uri.parse(sources.first()), downloadPort, input, start, length, camera, timezone, recorderFamily)
+            val port2Only = downloadPort != null && recorderFamily == "Dahua"
             var route = "Zvektra Port 2"
             val fallback = if (downloadPort != null && !supportsDownload) {
                 " Zvektra Port 2 download is unavailable for this device."
+            } else if (port2Only) {
+                " Zvektra Port 2 only."
             } else if (downloadPort != null && !coversRange(duration, length)) {
                 if (cancelled()) " Stopped before trying Zvektra Port 1." else
                     " Tried Zvektra Port 1 after Port 2 supplied ${seconds(duration)}."
             } else ""
-            if (!coversRange(duration, length) && !cancelled()) {
+            if (!port2Only && !coversRange(duration, length) && !cancelled()) {
                 progress("Reading recording through Zvektra Port 1", 0)
                 val rtsp = File.createTempFile("background-recording-", ".mp4", context.cacheDir)
                 try {
@@ -210,19 +213,27 @@ internal class BackgroundRecording(
         // The target is end-to-end wall time, not a deadline for discarding
         // usable footage and paying for a second acquisition at RTSP speed.
         val native = recorderFamily == "Dahua" && DahuaNativeDownload.AVAILABLE
-        val budgetMs = if (native) (length / 6).coerceIn(5_000L, 20_000L) else
-            (length / 2).coerceAtLeast(4000L)
+        val budgetMs = (length / 2).coerceAtLeast(4000L)
         val started = SystemClock.elapsedRealtime()
         val deadline = started + budgetMs
-        val stopFastPath = { cancelled() || SystemClock.elapsedRealtime() >= deadline }
+        val stopFastPath = { cancelled() || (!native && SystemClock.elapsedRealtime() >= deadline) }
         var lastUpdate = started
+        var lastGrowth = started
+        var lastBytes = 0L
+        var stalled = false
         val stopTransfer = {
             val now = SystemClock.elapsedRealtime()
+            val bytes = raw.length()
+            if (bytes > lastBytes) {
+                lastBytes = bytes
+                lastGrowth = now
+            }
+            stalled = native && now - lastGrowth >= 60_000L
             if (native && now - lastUpdate >= 1000 && !stopFastPath()) {
                 lastUpdate = now
                 progress("Zvektra Port 2: ${raw.length() / 1024} KiB received · ${seconds(now - started)}", 0)
             }
-            stopFastPath()
+            stopFastPath() || stalled
         }
         try {
             progress("Downloading recording through Zvektra Port 2", 0)
@@ -232,6 +243,7 @@ internal class BackgroundRecording(
                 val status = when {
                     downloaded -> "complete"
                     cancelled() -> "stopped"
+                    stalled -> "stalled for 60s"
                     stopFastPath() -> "timed out"
                     else -> "incomplete"
                 }
@@ -259,6 +271,7 @@ internal class BackgroundRecording(
             return videoDuration(output)
         } catch (error: Exception) {
             Log.w("BackgroundAgent", "Download failed (${error.javaClass.simpleName})")
+            if (native) nativeTransfer = " Port 2 failed (${error.javaClass.simpleName})."
             return 0L
         } catch (error: LinkageError) {
             Log.e("BackgroundAgent", "Android library error during download", error)
