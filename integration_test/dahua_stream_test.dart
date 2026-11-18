@@ -284,7 +284,8 @@ void main() {
       if (agentStatus?['running'] == false) break;
     }
     expect(agentStatus?['running'], isFalse);
-    expect(agentStatus?['message'], matches(r'Background analysis finished\. [2-9] clips saved\.'),
+    expect(RegExp(r'Background analysis finished\. [2-9] clips saved\.')
+        .hasMatch(agentStatus?['message'] as String? ?? ''), isTrue,
         reason: 'The native service must detect events and publish clips while Flutter is offscreen');
     debugPrint('ZVEKTRA_PLAYBACK_DETECTION_OK');
   });
