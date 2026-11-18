@@ -78,6 +78,15 @@ jobs:
           for path in realmonitor playback; do
             timeout 12 ffprobe -v error -rtsp_transport tcp               "rtsp://viewer:fixture-pass@127.0.0.1:8554/cam/$path"
           done
+      - name: Start Dahua Port 2 fixture
+        run: |
+          ffmpeg -hide_banner -loglevel error -stream_loop 1 -i /tmp/playback.mp4 -c copy /tmp/download.mp4
+          python3 integration_test/dahua_download_fixture.py /tmp/download.mp4 &
+          for attempt in {1..15}; do
+            if nc -z 127.0.0.1 8085; then break; fi
+            sleep 1
+          done
+          nc -z 127.0.0.1 8085
       - name: Build release-mode fixture app
         run: |
           flutter pub get

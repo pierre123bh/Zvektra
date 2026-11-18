@@ -23,12 +23,13 @@ class MainActivity : FlutterActivity() {
                     val start = call.argument<Number>("start")?.toLong() ?: 0L
                     val end = call.argument<Number>("end")?.toLong() ?: 0L
                     val camera = call.argument<Int>("camera") ?: 0
+                    val downloadPort = call.argument<Int>("downloadPort")?.takeIf { it in 1..65535 }
                     if (sources.isEmpty() || start <= 0 || end <= start || camera <= 0) {
                         result.error("INVALID_RANGE", null, null)
                     } else {
                         try {
                             result.success(BackgroundAgentService.start(applicationContext,
-                                ArrayList(sources), start, end, camera, TimeZone.getDefault().id))
+                                ArrayList(sources), start, end, camera, TimeZone.getDefault().id, downloadPort))
                         } catch (_: RuntimeException) {
                             result.error("BACKGROUND_START_FAILED", null, null)
                         }

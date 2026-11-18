@@ -39,7 +39,7 @@ class BackgroundAgentService : Service() {
         }
 
         internal fun start(context: Context, sources: ArrayList<String>, start: Long,
-                           end: Long, camera: Int, timezone: String): Boolean {
+                           end: Long, camera: Int, timezone: String, downloadPort: Int?): Boolean {
             if (running) return false
             running = true
             try {
@@ -49,6 +49,7 @@ class BackgroundAgentService : Service() {
                     .putExtra("end", end)
                     .putExtra("camera", camera)
                     .putExtra("timezone", timezone)
+                    .putExtra("downloadPort", downloadPort ?: 0)
                 androidx.core.content.ContextCompat.startForegroundService(context, intent)
             } catch (error: RuntimeException) {
                 running = false
@@ -90,6 +91,7 @@ class BackgroundAgentService : Service() {
         val end = intent?.getLongExtra("end", 0) ?: 0
         val camera = intent?.getIntExtra("camera", 0) ?: 0
         val timezone = intent?.getStringExtra("timezone") ?: "UTC"
+        val downloadPort = intent?.getIntExtra("downloadPort", 0)?.takeIf { it in 1..65535 }
         if (sources.isNullOrEmpty() || start <= 0 || end <= start || camera <= 0) {
             running = false
             stopSelf()
@@ -117,7 +119,7 @@ class BackgroundAgentService : Service() {
                         if (working && !cancelled) notifications.notify(WORK_NOTIFICATION, notification(message, percent))
                     }
                 }
-            }.run(sources, start, end - start, camera, timezone)
+            }.run(sources, start, end - start, camera, timezone, downloadPort)
             main.post { if (working) finish(result) }
         }
         return START_NOT_STICKY

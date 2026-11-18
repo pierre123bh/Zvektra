@@ -30,24 +30,19 @@ internal class BackgroundRecording(
     data class Result(val saved: Int, val partial: Boolean)
     private var saved = 0
 
-    fun run(sources: List<String>, start: Long, length: Long, camera: Int, timezone: String): Result {
+    fun run(sources: List<String>, start: Long, length: Long, camera: Int, timezone: String,
+            downloadPort: Int? = null): Result {
         val input = try {
             File.createTempFile("background-recording-", ".mp4", context.cacheDir)
         } catch (_: IOException) {
             return Result(0, true)
         }
         try {
-            var duration = 0L
-            for (source in sources) {
-                require(Uri.parse(source).let { it.scheme == "rtsp" && !it.host.isNullOrEmpty() })
-                for (videoOnly in listOf(false, true)) {
-                    if (cancelled()) return Result(saved, true)
-                    input.delete()
-                    capture(Uri.parse(source), input, length, videoOnly)
-                    duration = videoDuration(input)
-                    if (duration >= 400) break
-                }
-                if (duration >= 400) break
+            var duration = if (downloadPort == null) 0L else
+                tryDownload(Uri.parse(sources.first()), downloadPort, input, start, length, camera, timezone)
+            if (duration < 400) {
+                progress("Reading recording through Port 1", 0)
+                duration = capturePlayback(sources, input, length)
             }
             if (cancelled() || duration < 400) return Result(saved, true)
 
@@ -110,7 +105,46 @@ internal class BackgroundRecording(
         }
     }
 
-    private fun capture(source: Uri, file: File, length: Long, videoOnly: Boolean) {
+    private fun capturePlayback(sources: List<String>, input: File, length: Long): Long {
+        for (source in sources) {
+            val uri = Uri.parse(source)
+            require(uri.scheme == "rtsp" && !uri.host.isNullOrEmpty())
+            for (videoOnly in listOf(false, true)) {
+                if (cancelled()) return 0L
+                input.delete()
+                capture(uri, input, length, videoOnly)
+                val duration = videoDuration(input)
+                if (duration >= 400) return duration
+            }
+        }
+        return 0L
+    }
+
+    private fun tryDownload(source: Uri, outputPort: Int, output: File, start: Long, length: Long,
+                            camera: Int, timezone: String): Long {
+        val raw = File.createTempFile("background-recording-", ".dav", context.cacheDir)
+        try {
+            progress("Downloading recording through Port 2", 0)
+            if (!DahuaRecordingDownload.save(source, outputPort, camera, start, length, timezone, raw, cancelled)) return 0L
+            if (cancelled()) return 0L
+            val readable = videoDuration(raw)
+            if (readable >= 400) {
+                output.delete()
+                if (!raw.renameTo(output)) return 0L
+                return readable.takeIf { it + 2000 >= length } ?: 0L
+            } else {
+                output.delete()
+                capture(Uri.fromFile(raw), output, length, videoOnly = true, local = true)
+            }
+            return videoDuration(output).takeIf { it >= 400 && it + 2000 >= length } ?: 0L
+        } catch (_: Exception) {
+            return 0L
+        } finally {
+            raw.delete()
+        }
+    }
+
+    private fun capture(source: Uri, file: File, length: Long, videoOnly: Boolean, local: Boolean = false) {
         val vlc = LibVLC(context, arrayListOf("--rtsp-tcp", "--network-caching=1000"))
         try {
             val player = MediaPlayer(vlc)
@@ -120,7 +154,7 @@ internal class BackgroundRecording(
                 val media = Media(vlc, source)
                 try {
                     media.addOption(":sout=#std{access=file,mux=mp4,dst=" + file.absolutePath + "}")
-                    media.addOption(":stop-time=" + ((length + 999) / 1000))
+                    if (!local) media.addOption(":stop-time=" + ((length + 999) / 1000))
                     if (videoOnly) media.addOption(":no-sout-audio")
                     player.media = media
                 } finally {
@@ -141,7 +175,7 @@ internal class BackgroundRecording(
                     idleSeconds = if (bytes > lastBytes) 0 else idleSeconds + 1
                     lastBytes = bytes
                     val elapsed = position.get()
-                    if (elapsed >= length || idleSeconds >= 25 || context.cacheDir.usableSpace < 64L * 1024 * 1024) break
+                    if ((!local && elapsed >= length) || idleSeconds >= 25 || context.cacheDir.usableSpace < 64L * 1024 * 1024) break
                     progress("Reading recording", (elapsed.coerceIn(0, length) * 45 / length).toInt())
                 }
             } finally {

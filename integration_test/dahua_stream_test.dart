@@ -287,6 +287,22 @@ void main() {
     expect(RegExp(r'Background analysis finished\. [2-9] clips saved\.')
         .hasMatch(agentStatus?['message'] as String? ?? ''), isTrue,
         reason: 'The native service must detect events and publish clips while Flutter is offscreen');
+    // The RTSP port is intentionally unreachable for this second run.
+    final downloadSource = Uri.parse(review.dataSource).replace(port: 8555);
+    expect(await agent.invokeMethod<bool>('start', {
+      ...agentRange,
+      'sources': [downloadSource.toString()],
+      'downloadPort': 8085,
+    }), isTrue);
+    for (var attempt = 0; attempt < 125; attempt++) {
+      await tester.pump(const Duration(milliseconds: 400));
+      agentStatus = await agent.invokeMapMethod<String, dynamic>('status');
+      if (agentStatus?['running'] == false) break;
+    }
+    expect(agentStatus?['running'], isFalse);
+    expect(agentStatus?['message'], predicate<String>((message) =>
+        RegExp(r'Background analysis finished\. [2-9] clips saved\.').hasMatch(message)),
+        reason: 'Port 2 must download, analyze and save clips without RTSP');
     debugPrint('ZVEKTRA_PLAYBACK_DETECTION_OK');
   });
 }

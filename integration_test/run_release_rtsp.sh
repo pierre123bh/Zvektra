@@ -8,6 +8,7 @@ print_diagnostics() {
 trap print_diagnostics ERR
 
 adb reverse tcp:8554 tcp:8554
+adb reverse tcp:8085 tcp:8085
 adb install -g build/app/outputs/flutter-apk/app-release.apk
 adb logcat -c
 adb shell am start -W -n net.zvektra.zvektra.whisper/net.zvektra.zvektra.MainActivity

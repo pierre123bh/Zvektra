@@ -23,10 +23,11 @@ const manufacturers = ['Dahua', 'Hikvision', 'Uniview', 'MEye', 'Topcam'];
 class Nvr {
   final String id, name, manufacturer, port, username;
   final int maxChannels;
-  const Nvr({required this.id,required this.name,required this.manufacturer,required this.port,required this.username,required this.maxChannels});
-  Map<String,dynamic> toJson()=>{'id':id,'name':name,'manufacturer':manufacturer,'port':port,'username':username,'maxChannels':maxChannels};
-  factory Nvr.fromJson(Map<String,dynamic> x)=>Nvr(id:x['id'],name:x['name'],manufacturer:x['manufacturer'],port:x['port'],username:x['username'],maxChannels:x['maxChannels']);
-  Nvr copyWith({String? name,String? manufacturer,String? port,String? username,int? maxChannels})=>Nvr(id:id,name:name??this.name,manufacturer:manufacturer??this.manufacturer,port:port??this.port,username:username??this.username,maxChannels:maxChannels??this.maxChannels);
+  final String? port2;
+  const Nvr({required this.id,required this.name,required this.manufacturer,required this.port,required this.username,required this.maxChannels,this.port2});
+  Map<String,dynamic> toJson()=>{'id':id,'name':name,'manufacturer':manufacturer,'port':port,'port2':port2,'username':username,'maxChannels':maxChannels};
+  factory Nvr.fromJson(Map<String,dynamic> x)=>Nvr(id:x['id'],name:x['name'],manufacturer:x['manufacturer'],port:x['port'],port2:x['port2'] as String?,username:x['username'],maxChannels:x['maxChannels']);
+  Nvr copyWith({String? name,String? manufacturer,String? port,String? username,int? maxChannels})=>Nvr(id:id,name:name??this.name,manufacturer:manufacturer??this.manufacturer,port:port??this.port,port2:port2,username:username??this.username,maxChannels:maxChannels??this.maxChannels);
 }
 
 class DeviceStore extends ChangeNotifier {
@@ -174,7 +175,7 @@ class _HomeState extends State<Home> {
 
 class DevicesScreen extends StatelessWidget {
   final DeviceStore store;const DevicesScreen({super.key,required this.store});
-  @override Widget build(BuildContext context)=>ListView(padding:const EdgeInsets.all(16),children:[Row(children:[Expanded(child:Text('My Devices (${store.devices.length}/5)',style:Theme.of(context).textTheme.titleLarge)),FilledButton.icon(onPressed:store.devices.length>=5?null:()=>showDeviceForm(context,store,null),icon:const Icon(Icons.add),label:const Text('Add Device'))]),const SizedBox(height:12),...store.devices.map((n)=>Card(child:ListTile(leading:const Icon(Icons.dns_outlined),title:Text(n.name),subtitle:Text('${n.manufacturer}  •  Zvektra Port ${n.port}  •  ${n.maxChannels} channels'),trailing:Wrap(spacing:0,children:[IconButton(tooltip:'Edit',onPressed:()=>showDeviceForm(context,store,n),icon:const Icon(Icons.edit_outlined)),IconButton(tooltip:'Delete',onPressed:() async {final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Delete device?'),content:Text('Remove ${n.name} and its stored credentials?'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),TextButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Delete'))]));if(ok==true) await store.remove(n.id);},icon:const Icon(Icons.delete_outline))])))),if(store.devices.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Text('Add a device to begin.'))]);
+  @override Widget build(BuildContext context)=>ListView(padding:const EdgeInsets.all(16),children:[Row(children:[Expanded(child:Text('My Devices (${store.devices.length}/5)',style:Theme.of(context).textTheme.titleLarge)),FilledButton.icon(onPressed:store.devices.length>=5?null:()=>showDeviceForm(context,store,null),icon:const Icon(Icons.add),label:const Text('Add Device'))]),const SizedBox(height:12),...store.devices.map((n)=>Card(child:ListTile(leading:const Icon(Icons.dns_outlined),title:Text(n.name),subtitle:Text('${n.manufacturer}  •  Zvektra Port 1: ${n.port}  •  ${n.maxChannels} channels'),trailing:Wrap(spacing:0,children:[IconButton(tooltip:'Edit',onPressed:()=>showDeviceForm(context,store,n),icon:const Icon(Icons.edit_outlined)),IconButton(tooltip:'Delete',onPressed:() async {final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Delete device?'),content:Text('Remove ${n.name} and its stored credentials?'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),TextButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Delete'))]));if(ok==true) await store.remove(n.id);},icon:const Icon(Icons.delete_outline))])))),if(store.devices.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Text('Add a device to begin.'))]);
 }
 
 Future<void> showDeviceForm(BuildContext context, DeviceStore store, Nvr? existing) {
@@ -199,6 +200,7 @@ class _DeviceFormState extends State<_DeviceForm> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.existing?.name);
   late final _port = TextEditingController(text: widget.existing?.port);
+  late final _port2 = TextEditingController(text: widget.existing?.port2);
   late final _channels =
       TextEditingController(text: widget.existing?.maxChannels.toString());
   late final _user = TextEditingController(text: widget.existing?.username);
@@ -213,6 +215,7 @@ class _DeviceFormState extends State<_DeviceForm> {
   void dispose() {
     _name.dispose();
     _port.dispose();
+    _port2.dispose();
     _channels.dispose();
     _user.dispose();
     _password.dispose();
@@ -231,6 +234,7 @@ class _DeviceFormState extends State<_DeviceForm> {
       name: _name.text.trim(),
       manufacturer: _manufacturer,
       port: int.parse(_port.text).toString(),
+      port2: _port2.text.isEmpty ? null : int.parse(_port2.text).toString(),
       username: _user.text.trim(),
       maxChannels: int.parse(_channels.text),
     );
@@ -296,12 +300,36 @@ class _DeviceFormState extends State<_DeviceForm> {
                       FilteringTextInputFormatter.digitsOnly,
                       LengthLimitingTextInputFormatter(5),
                     ],
-                    decoration: const InputDecoration(labelText: 'Zvektra Port'),
+                    decoration: const InputDecoration(labelText: 'Zvektra Port 1', helperText: 'RTSP live and playback'),
                     validator: (value) {
                       final port = int.tryParse(value ?? '');
                       return port == null || port < 1 || port > 65535
                           ? 'Enter a port from 1 to 65535'
                           : null;
+                    },
+                  ),
+                  TextFormField(
+                    controller: _port2,
+                    enabled: !_saving,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(5),
+                    ],
+                    decoration: const InputDecoration(
+                      labelText: 'Zvektra Port 2',
+                      helperText: 'Optional · Dahua Background Agent',
+                    ),
+                    validator: (value) {
+                      if (value == null || value.isEmpty) return null;
+                      final port = int.tryParse(value);
+                      if (port == null || port < 1 || port > 65535) {
+                        return 'Enter a port from 1 to 65535';
+                      }
+                      if (port == int.tryParse(_port.text)) {
+                        return 'Use a different port from Port 1';
+                      }
+                      return null;
                     },
                   ),
                   TextFormField(
@@ -1435,6 +1463,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       if (!mounted) return;
       final started = await _backgroundAgent.invokeMethod<bool>('start', {
         'sources': sources,
+        if (device.manufacturer == 'Dahua' && device.port2 != null)
+          'downloadPort': int.tryParse(device.port2!),
         'start': start.millisecondsSinceEpoch,
         'end': end.millisecondsSinceEpoch,
         'camera': camera,
