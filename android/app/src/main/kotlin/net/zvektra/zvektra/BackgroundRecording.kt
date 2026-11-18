@@ -83,6 +83,8 @@ internal class BackgroundRecording(
             val plateWorker = Executors.newSingleThreadExecutor()
             val syncFrames = MediaExtractor()
             var missingFrames = 0
+            var analyzedFrames = 0
+            val sampleIntervalMs = 5000L
             try {
                 retriever.setDataSource(input.absolutePath)
                 val seekable = runCatching {
@@ -96,18 +98,25 @@ internal class BackgroundRecording(
                 val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
                 val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
                 val largestSide = maxOf(width, height)
-                val scale = if (largestSide > 960) 960.0 / largestSide else 1.0
+                val scale = if (largestSide > 640) 640.0 / largestSide else 1.0
                 PlaybackDetector(context).use { detector ->
                     var offset = 0L
+                    var lastFrameUs = -1L
                     while (offset < available && !cancelled()) {
-                        progress("Analyzing recording", 45 + (offset * 40 / available).toInt())
-                        val timeUs = offset * 1000
-                        val option = if (seekable && runCatching {
-                                syncFrames.seekTo(timeUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
-                                val syncTime = syncFrames.sampleTime
-                                syncTime >= 0 && kotlin.math.abs(syncTime - timeUs) <= 100_000L
-                            }.getOrDefault(false)) MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-                            else MediaMetadataRetriever.OPTION_CLOSEST
+                        progress("Analyzing recording ($analyzedFrames frames)", 45 + (offset * 40 / available).toInt())
+                        val requestedUs = offset * 1000
+                        val syncUs = if (seekable) runCatching {
+                            syncFrames.seekTo(requestedUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                            syncFrames.sampleTime
+                        }.getOrDefault(-1L) else -1L
+                        val timeUs = if (syncUs >= 0) syncUs else requestedUs
+                        if (timeUs == lastFrameUs || timeUs >= available * 1000) {
+                            offset += sampleIntervalMs
+                            continue
+                        }
+                        lastFrameUs = timeUs
+                        val eventOffset = timeUs / 1000
+                        val option = MediaMetadataRetriever.OPTION_CLOSEST_SYNC
                         val scaled = if (Build.VERSION.SDK_INT >= 27 && scale < 1.0 && width > 0 && height > 0) {
                             runCatching { retriever.getScaledFrameAtTime(timeUs, option,
                                 (width * scale).toInt().coerceAtLeast(1),
@@ -118,15 +127,20 @@ internal class BackgroundRecording(
                             missingFrames++
                         } else {
                             try {
+                                analyzedFrames++
                                 for (kind in detector.detectKinds(frame, plateWorker)) {
-                                    if (offset - (lastSeen[kind] ?: -4000L) > 3000) events.add(kind to offset)
-                                    lastSeen[kind] = offset
+                                    // Suppress overlapping clips of the same detection kind.
+                                    val previous = lastSeen[kind]
+                                    if (previous == null || eventOffset - previous >= 15_000L) {
+                                        events.add(kind to eventOffset)
+                                        lastSeen[kind] = eventOffset
+                                    }
                                 }
                             } finally {
                                 frame.recycle()
                             }
                         }
-                        offset += 1000
+                        offset += sampleIntervalMs
                     }
                 }
             } finally {
@@ -163,8 +177,9 @@ internal class BackgroundRecording(
                 if (missingFrames > 0) add("$missingFrames frames could not be decoded.")
                 if (failed > 0) add("$failed clips could not be saved.")
             }
+            val samplingText = " Fast scan: $analyzedFrames keyframes, 5s sampling. Brief events can be missed."
             val issueText = issues.joinToString(" ", prefix = if (issues.isEmpty()) "" else " ")
-            val details = "$route. Read ${seconds(acquisitionMs)} · Scan ${seconds(analysisMs)} · Save ${seconds(savingMs)} · Total ${seconds(total)}.$fallback$nativeTransfer$issueText"
+            val details = "$route. Read ${seconds(acquisitionMs)} · Scan ${seconds(analysisMs)} · Save ${seconds(savingMs)} · Total ${seconds(total)}.$fallback$nativeTransfer$samplingText$issueText"
             Log.i("BackgroundAgent", "Recording=$length ms. $details")
             return Result(saved, cancelled() || issues.isNotEmpty(), details)
         } catch (error: Exception) {
