@@ -59,7 +59,7 @@ internal class BackgroundRecording(
                 progress("Reading recording through Zvektra Port 1", 0)
                 val rtsp = File.createTempFile("background-recording-", ".mp4", context.cacheDir)
                 try {
-                    val capture = capturePlayback(sources, rtsp, length, tryFast = length >= 10000)
+                    val capture = capturePlayback(sources, rtsp, length, tryKeyframes = recorderFamily == "Dahua" && length >= 10000)
                     val rtspDuration = capture.duration
                     playbackTest = capture.speedSummary
                     if (rtspDuration > duration && rtsp.renameTo(input)) {
@@ -187,7 +187,7 @@ internal class BackgroundRecording(
         fun describe() = "$state, ${bytes / 1024} KiB written"
     }
 
-    private fun capturePlayback(sources: List<String>, input: File, length: Long, tryFast: Boolean): RecordedPlayback {
+    private fun capturePlayback(sources: List<String>, input: File, length: Long, tryKeyframes: Boolean): RecordedPlayback {
         var best = 0L
         var speedSummary = ""
         val attempt = File.createTempFile("background-recording-", ".mp4", context.cacheDir)
@@ -195,36 +195,37 @@ internal class BackgroundRecording(
             for (source in sources) {
                 val uri = Uri.parse(source)
                 require(uri.scheme == "rtsp" && !uri.host.isNullOrEmpty())
-                if (tryFast && !cancelled()) {
+                if (tryKeyframes && !cancelled()) {
                     attempt.delete()
-                    progress("Testing 8× through Zvektra Port 1", 0)
+                    progress("Testing keyframes through Zvektra Port 1", 0)
                     val started = SystemClock.elapsedRealtime()
                     var playSent = false
                     var playReply = "no reply"
                     val fastCapture = try {
-                        ScaledRtspSession(uri).use { session ->
+                        KeyframeRtspSession(uri).use { session ->
                             val result = capture(session.localUri, attempt, length, videoOnly = true,
-                                maxWallTime = (length / 8) + 12000L)
+                                maxWallTime = minOf(length + 6000L, 25000L))
                             playSent = session.playSent
                             playReply = session.playReply
                             result
                         }
                     } catch (error: Exception) {
-                        Log.w("BackgroundAgent", "Scaled playback failed (${error.javaClass.simpleName})")
+                        Log.w("BackgroundAgent", "Keyframe playback failed (${error.javaClass.simpleName})")
                         CaptureState("capture failed", 0L)
                     }
                     val elapsed = (SystemClock.elapsedRealtime() - started).coerceAtLeast(1)
                     val duration = videoDuration(attempt)
-                    val deliveredRate = String.format(Locale.US, "%.1f", duration.toDouble() / elapsed)
-                    val sparse = coversRange(duration, length) && !hasContinuousSamples(attempt)
-                    val request = if (playSent) "8× requested ($playReply)" else "8× could not be requested"
-                    speedSummary = " $request. Received ${seconds(duration)} in ${seconds(elapsed)} (effective ${deliveredRate}×)." +
-                        if (sparse) " Frame gaps detected. Retrying at normal speed." else ""
-                    if (!cancelled() && coversRange(duration, length) && !sparse && attempt.renameTo(input)) {
+                    val samples = inspectVideoSamples(attempt)
+                    val request = if (playSent) "Keyframes requested ($playReply)" else "Keyframe request not sent"
+                    speedSummary = " $request. ${samples.syncFrames}/${samples.frames} keyframes. " +
+                        "Timestamp span ${seconds(samples.spanMs)} of ${seconds(length)} in ${seconds(elapsed)}. " +
+                        "Largest gap ${seconds(samples.maxGapMs)}."
+                    if (!cancelled() && samples.frames > samples.syncFrames && samples.maxGapMs <= 1000 &&
+                        coversRange(samples.spanMs, length) && coversRange(duration, length) && attempt.renameTo(input)) {
                         return RecordedPlayback(duration, speedSummary)
                     }
                     if (duration < 400) speedSummary += " First capture: ${fastCapture.describe()}."
-                    if (!sparse) speedSummary += " Retrying at normal speed."
+                    speedSummary += " Reading normal playback for clips."
                     progress("Retrying at normal speed through Zvektra Port 1", 0)
                 }
                 for (videoOnly in listOf(true, false)) {
@@ -245,27 +246,36 @@ internal class BackgroundRecording(
         }
     }
 
-    private fun hasContinuousSamples(file: File): Boolean {
+    private data class VideoSamples(val frames: Int = 0, val syncFrames: Int = 0,
+                                    val spanMs: Long = 0, val maxGapMs: Long = 0)
+
+    private fun inspectVideoSamples(file: File): VideoSamples {
+        if (file.length() == 0L) return VideoSamples()
         val extractor = MediaExtractor()
         return try {
             extractor.setDataSource(file.absolutePath)
             val video = (0 until extractor.trackCount).firstOrNull {
                 extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
-            } ?: return false
+            } ?: return VideoSamples()
             extractor.selectTrack(video)
-            var previous = -1L
-            var count = 0
+            val times = mutableListOf<Long>()
+            var syncFrames = 0
             while (!cancelled()) {
                 val time = extractor.sampleTime
-                if (time < 0) return count > 1
-                if (previous >= 0 && time - previous > 1_000_000L) return false
-                previous = maxOf(previous, time)
-                count++
+                if (time < 0) break
+                times.add(time)
+                if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) syncFrames++
                 extractor.advance()
             }
-            false
+            times.sort()
+            var maxGapUs = 0L
+            for (index in 1 until times.size) {
+                maxGapUs = maxOf(maxGapUs, times[index] - times[index - 1])
+            }
+            val spanUs = if (times.isEmpty()) 0L else times.last() - times.first()
+            VideoSamples(times.size, syncFrames, spanUs / 1000, maxGapUs / 1000)
         } catch (_: Exception) {
-            false
+            VideoSamples()
         } finally {
             extractor.release()
         }

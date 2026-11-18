@@ -13,8 +13,8 @@ import java.net.Socket
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-/** Relays the existing RTSP/TCP session so Scale is present on the actual recorder PLAY. */
-internal class ScaledRtspSession(private val source: Uri) : AutoCloseable {
+/** Relays the existing RTSP/TCP session to request keyframes without real-time pacing. */
+internal class KeyframeRtspSession(private val source: Uri) : AutoCloseable {
     private val loopback = InetAddress.getByName("127.0.0.1")
     private val host = requireNotNull(source.host)
     private val port = source.port.takeIf { it > 0 } ?: 554
@@ -86,7 +86,9 @@ internal class ScaledRtspSession(private val source: Uri) : AutoCloseable {
                 ?.let { message.set("Authorization", it) }
         }
         if (method == "PLAY") {
-            message.set("Scale", "8.0")
+            message.set("Scale", "1.0")
+            message.set("Frames", "intra")
+            message.set("Rate-Control", "no")
             message.get("CSeq")?.let { plays[it] = true }
             playSent = true
         }
@@ -97,11 +99,12 @@ internal class ScaledRtspSession(private val source: Uri) : AutoCloseable {
         val auth = message.get("WWW-Authenticate")
         if (auth?.startsWith("Digest ", ignoreCase = true) == true) challenge = auth.drop(7)
         if (message.get("CSeq")?.let { plays.remove(it) } == true && status != "401") {
-            val scale = message.get("Scale")?.toDoubleOrNull()
-            playReply = when {
-                status != "200" -> "recorder replied ${status ?: "with an invalid status"}"
-                scale == null -> "recorder did not report a scale"
-                else -> "recorder reported ${scale}×"
+            playReply = if (status == "200") {
+                val frames = message.get("Frames")?.take(24) ?: "unreported"
+                val pacing = message.get("Rate-Control")?.take(8) ?: "unreported"
+                "RTSP status 200, Frames $frames, Rate-Control $pacing"
+            } else {
+                "RTSP status ${status ?: "unknown"}"
             }
         }
         for (header in listOf("Content-Base", "Content-Location")) {
