@@ -113,7 +113,7 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
             }
             val shortened = duration < (export.seconds - 2) * 1000L
             if (Build.VERSION.SDK_INT >= 29) {
-                saveModern(export.file)
+                publishModernClip(app, export.file)
                 export.result.success(shortened)
             } else {
                 saveLegacy(export.file, shortened, export.result)
@@ -122,44 +122,6 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
             export.result.error("CLIP_EXPORT_FAILED", null, null)
         } finally {
             export.file.delete()
-        }
-    }
-
-    private fun videoDuration(file: File): Long {
-        if (file.length() == 0L) return 0
-        val metadata = MediaMetadataRetriever()
-        return try {
-            metadata.setDataSource(file.absolutePath)
-            val duration = metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLongOrNull() ?: 0
-            if (metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes") duration else 0L
-        } catch (_: Exception) {
-            0L
-        } finally {
-            metadata.release()
-        }
-    }
-
-    @androidx.annotation.RequiresApi(29)
-    private fun saveModern(file: File) {
-        val resolver = app.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/Zvektra")
-            put(MediaStore.Video.Media.IS_PENDING, 1)
-        }
-        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IOException("Could not create gallery entry")
-        try {
-            val stream = resolver.openOutputStream(uri) ?: throw IOException("Could not open video")
-            stream.use { output -> file.inputStream().use { it.copyTo(output) } }
-            values.clear()
-            values.put(MediaStore.Video.Media.IS_PENDING, 0)
-            if (resolver.update(uri, values, null, null) != 1) throw IOException("Could not publish video")
-        } catch (error: Exception) {
-            runCatching { resolver.delete(uri, null, null) }
-            throw error
         }
     }
 
@@ -191,5 +153,43 @@ internal class ClipGalleryChannel(context: Context, messenger: BinaryMessenger) 
             job?.let { finish(it, false) }
             thread.quitSafely()
         }
+    }
+}
+
+internal fun videoDuration(file: File): Long {
+    if (file.length() == 0L) return 0
+    val metadata = MediaMetadataRetriever()
+    return try {
+        metadata.setDataSource(file.absolutePath)
+        val duration = metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            ?.toLongOrNull() ?: 0
+        if (metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes") duration else 0L
+    } catch (_: Exception) {
+        0L
+    } finally {
+        metadata.release()
+    }
+}
+
+@androidx.annotation.RequiresApi(29)
+internal fun publishModernClip(context: Context, file: File, name: String = file.name) {
+    val resolver = context.contentResolver
+    val values = ContentValues().apply {
+        put(MediaStore.Video.Media.DISPLAY_NAME, name)
+        put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+        put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/Zvektra")
+        put(MediaStore.Video.Media.IS_PENDING, 1)
+    }
+    val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+        ?: throw IOException("Could not create gallery entry")
+    try {
+        val stream = resolver.openOutputStream(uri) ?: throw IOException("Could not open video")
+        stream.use { output -> file.inputStream().use { it.copyTo(output) } }
+        values.clear()
+        values.put(MediaStore.Video.Media.IS_PENDING, 0)
+        if (resolver.update(uri, values, null, null) != 1) throw IOException("Could not publish video")
+    } catch (error: Exception) {
+        runCatching { resolver.delete(uri, null, null) }
+        throw error
     }
 }

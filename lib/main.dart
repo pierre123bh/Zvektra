@@ -377,6 +377,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_refreshBackgroundAgent());
     _speech.setMethodCallHandler((call) async {
       if (!mounted || !(recording || _voiceBusy || _awaitingSpeech)) return;
       if (call.method != 'recognized' && call.method != 'speechError') return;
@@ -502,6 +503,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
+    if (_foreground) unawaited(_refreshBackgroundAgent());
     if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
       if (_analysis?.running == true) {
         _finishRecordingAnalysis('Analysis interrupted. Results are partial.');
@@ -569,6 +571,7 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
 
   @override
   void dispose() {
+    _backgroundStatusTimer?.cancel();
     _streamTimeout?.cancel();
     _portCheck?.cancel();
     _stopDetection();
@@ -1367,6 +1370,87 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     }
   }
 
+  static const _backgroundAgent = MethodChannel('net.zvektra/background_agent');
+  Timer? _backgroundStatusTimer;
+  bool _backgroundRunning = false;
+  bool _backgroundStarting = false;
+
+  Future<void> _refreshBackgroundAgent() async {
+    try {
+      final status = await _backgroundAgent.invokeMapMethod<String, dynamic>('status');
+      if (!mounted || status == null) return;
+      final running = status['running'] == true;
+      final finished = _backgroundRunning && !running;
+      if (_backgroundRunning != running) setState(() => _backgroundRunning = running);
+      if (running) {
+        _backgroundStatusTimer ??= Timer.periodic(const Duration(seconds: 1),
+            (_) => unawaited(_refreshBackgroundAgent()));
+      } else {
+        _backgroundStatusTimer?.cancel();
+        _backgroundStatusTimer = null;
+        final message = status['message'];
+        if (finished && _foreground && message is String && message.isNotEmpty) {
+          _commandFeedback(message);
+        }
+      }
+    } on PlatformException {
+      // The activity can be detached while the service continues working.
+    } on MissingPluginException {
+      // Flutter-only tests do not run the Android service.
+    }
+  }
+
+  Future<void> _startBackgroundAgent() async {
+    if (_backgroundRunning || _backgroundStarting) return;
+    final start = _atTime(_playbackFrom);
+    final end = _atTime(_playbackTo);
+    final device = selected;
+    final camera = channel;
+    if (device == null || !end.isAfter(start) || end.isAfter(DateTime.now())) {
+      _commandFeedback('Select a device and a valid recorded time range.');
+      return;
+    }
+    setState(() => _backgroundStarting = true);
+    try {
+      final password = await widget.store.password(device.id);
+      if (!mounted) return;
+      if (password == null || password.isEmpty) {
+        _commandFeedback('Edit the device and enter its password.');
+        return;
+      }
+      final sources = [
+        StreamBuilderService.url(device, camera, start: start, end: end, password: password),
+        if (device.manufacturer == 'Topcam')
+          StreamBuilderService.url(device, camera, start: start, end: end,
+              password: password, topcamFallback: true),
+      ].whereType<String>().toList();
+      final gallery = await const MethodChannel('net.zvektra/snapshot_gallery')
+          .invokeMethod<bool>('requiresStoragePermission');
+      if (!mounted) return;
+      if (gallery == true && !(await Permission.storage.request()).isGranted) {
+        if (mounted) _commandFeedback('Allow storage access to save clips to your gallery.');
+        return;
+      }
+      await Permission.notification.request();
+      if (!mounted) return;
+      final started = await _backgroundAgent.invokeMethod<bool>('start', {
+        'sources': sources,
+        'start': start.millisecondsSinceEpoch,
+        'end': end.millisecondsSinceEpoch,
+        'camera': camera,
+      });
+      if (!mounted) return;
+      if (started == true) _commandFeedback('Background analysis started.');
+      await _refreshBackgroundAgent();
+    } on PlatformException {
+      if (mounted) _commandFeedback('Could not start Background Agent.');
+    } on MissingPluginException {
+      if (mounted) _commandFeedback('Background Agent is available on Android.');
+    } finally {
+      if (mounted) setState(() => _backgroundStarting = false);
+    }
+  }
+
   Future<void> _playSelectedRange({RecordingAnalysisFilter? analysisFilter}) async {
     final start = _atTime(_playbackFrom);
     final end = _atTime(_playbackTo);
@@ -1571,6 +1655,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
               _PlaybackAction(
                 width: width, label: 'Commands', icon: Icons.keyboard,
                 onPressed: () => setState(() => _showCommands = !_showCommands),
+              ),
+              _PlaybackAction(
+                width: width,
+                label: _backgroundRunning ? 'Agent running' : 'Background Agent',
+                icon: Icons.pending_actions,
+                tooltip: _backgroundRunning ? 'Background Agent is running' : 'Background Agent',
+                onPressed: _backgroundRunning || _backgroundStarting ? null : _startBackgroundAgent,
               ),
               if (analysis != null && !analyzing && (!_showAnalysis || !_showClipActions))
                 _PlaybackAction(

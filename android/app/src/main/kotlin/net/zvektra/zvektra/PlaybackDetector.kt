@@ -53,6 +53,15 @@ internal class PlaybackDetector(private val context: Context) : AutoCloseable {
         }
     }
 
+    fun detectKinds(frame: Bitmap): List<String> {
+        val personModel = people ?: load("people").also { people = it }
+        val plateModel = plates ?: load("plates").also { plates = it }
+        return buildList {
+            if (peopleIn(frame, personModel).isNotEmpty()) add("person")
+            if (platesIn(frame, plateModel).isNotEmpty()) add("licensePlate")
+        }
+    }
+
     private fun peopleIn(frame: Bitmap, model: OrtSession): List<RectF> {
         // SSD MobileNet consumes NHWC RGB bytes and returns normalized YXYX boxes.
         val size = 300

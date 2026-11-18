@@ -265,6 +265,27 @@ void main() {
     expect(Uri.parse(review.dataSource).queryParameters['channel'], '2');
     expect(Uri.parse(review.dataSource).queryParameters['endtime'], endsWith('_15_05_00'));
     expect(find.byTooltip('Recording analysis results'), findsOneWidget);
+    const agent = MethodChannel('net.zvektra/background_agent');
+    final agentRange = {
+      'sources': [review.dataSource],
+      'start': DateTime(2024, 11, 15, 15).millisecondsSinceEpoch,
+      'end': DateTime(2024, 11, 15, 15, 0, 16).millisecondsSinceEpoch,
+      'camera': 2,
+    };
+    expect(await agent.invokeMethod<bool>('start', agentRange), isTrue);
+    expect(await agent.invokeMethod<bool>('start', agentRange), isFalse);
+    expect((await agent.invokeMapMethod<String, dynamic>('status'))?['running'], isTrue);
+    debugPrint('ZVEKTRA_BACKGROUND_AGENT_STARTED');
+
+    Map<String, dynamic>? agentStatus;
+    for (var attempt = 0; attempt < 150; attempt++) {
+      await tester.pump(const Duration(milliseconds: 400));
+      agentStatus = await agent.invokeMapMethod<String, dynamic>('status');
+      if (agentStatus?['running'] == false) break;
+    }
+    expect(agentStatus?['running'], isFalse);
+    expect(agentStatus?['message'], matches(r'Background analysis finished\. [2-9] clips saved\.'),
+        reason: 'The native service must detect events and publish clips while Flutter is offscreen');
     debugPrint('ZVEKTRA_PLAYBACK_DETECTION_OK');
   });
 }
