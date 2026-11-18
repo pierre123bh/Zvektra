@@ -34,7 +34,7 @@ internal class BackgroundRecording(
     private var saved = 0
 
     fun run(sources: List<String>, start: Long, length: Long, camera: Int, timezone: String,
-            downloadPort: Int? = null): Result {
+            downloadPort: Int? = null, recorderFamily: String = "Dahua"): Result {
         val input = try {
             File.createTempFile("background-recording-", ".mp4", context.cacheDir)
         } catch (_: IOException) {
@@ -43,20 +43,23 @@ internal class BackgroundRecording(
         val jobStarted = SystemClock.elapsedRealtime()
         var stage = "opening the recording"
         try {
-            var duration = if (downloadPort == null) 0L else
-                tryDownload(Uri.parse(sources.first()), downloadPort, input, start, length, camera, timezone)
-            var route = "Port 2"
-            val fallback = if (downloadPort != null && !coversRange(duration, length)) {
-                " Port 2 supplied ${seconds(duration)} before fallback."
+            val supportsDownload = recorderFamily == "Dahua" || recorderFamily == "Hikvision"
+            var duration = if (downloadPort == null || !supportsDownload) 0L else
+                tryDownload(Uri.parse(sources.first()), downloadPort, input, start, length, camera, timezone, recorderFamily)
+            var route = "Zvektra Port 2"
+            val fallback = if (downloadPort != null && !supportsDownload) {
+                " Zvektra Port 2 download is unavailable for this device."
+            } else if (downloadPort != null && !coversRange(duration, length)) {
+                " Zvektra Port 2 supplied ${seconds(duration)} before fallback."
             } else ""
             if (!coversRange(duration, length) && !cancelled()) {
-                progress("Reading recording through Port 1", 0)
+                progress("Reading recording through Zvektra Port 1", 0)
                 val rtsp = File.createTempFile("background-recording-", ".mp4", context.cacheDir)
                 try {
                     val rtspDuration = capturePlayback(sources, rtsp, length)
                     if (rtspDuration > duration && rtsp.renameTo(input)) {
                         duration = rtspDuration
-                        route = "Port 1 (RTSP)"
+                        route = "Zvektra Port 1"
                     }
                 } finally {
                     rtsp.delete()
@@ -199,7 +202,7 @@ internal class BackgroundRecording(
     }
 
     private fun tryDownload(source: Uri, outputPort: Int, output: File, start: Long, length: Long,
-                            camera: Int, timezone: String): Long {
+                            camera: Int, timezone: String, recorderFamily: String): Long {
         val raw = File.createTempFile("background-recording-", ".dav", context.cacheDir)
         // The target is end-to-end wall time, not a deadline for discarding
         // usable footage and paying for a second acquisition at RTSP speed.
@@ -207,8 +210,8 @@ internal class BackgroundRecording(
         val deadline = SystemClock.elapsedRealtime() + budgetMs
         val stopFastPath = { cancelled() || SystemClock.elapsedRealtime() >= deadline }
         try {
-            progress("Downloading recording through Port 2", 0)
-            if (!DahuaRecordingDownload.save(source, outputPort, camera, start, length, timezone, raw, stopFastPath)) return 0L
+            progress("Downloading recording through Zvektra Port 2", 0)
+            if (!RecorderRecordingDownload.save(source, outputPort, camera, start, length, timezone, recorderFamily, raw, stopFastPath)) return 0L
             if (cancelled()) return 0L
             val signature = raw.inputStream().use { stream ->
                 ByteArray(5).also { stream.read(it) }.toString(Charsets.US_ASCII)
@@ -221,7 +224,7 @@ internal class BackgroundRecording(
                 return readable
             } else {
                 output.delete()
-                progress("Preparing Port 2 recording", 30)
+                progress("Preparing Zvektra Port 2 recording", 30)
                 capture(Uri.fromFile(raw), output, length, videoOnly = true,
                     local = true, dav = dahua, stop = stopFastPath)
                 if (cancelled()) return 0L

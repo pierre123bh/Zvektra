@@ -175,7 +175,11 @@ class _HomeState extends State<Home> {
 
 class DevicesScreen extends StatelessWidget {
   final DeviceStore store;const DevicesScreen({super.key,required this.store});
-  @override Widget build(BuildContext context)=>ListView(padding:const EdgeInsets.all(16),children:[Row(children:[Expanded(child:Text('My Devices (${store.devices.length}/5)',style:Theme.of(context).textTheme.titleLarge)),FilledButton.icon(onPressed:store.devices.length>=5?null:()=>showDeviceForm(context,store,null),icon:const Icon(Icons.add),label:const Text('Add Device'))]),const SizedBox(height:12),...store.devices.map((n)=>Card(child:ListTile(leading:const Icon(Icons.dns_outlined),title:Text(n.name),subtitle:Text('${n.manufacturer}  •  Zvektra Port 1: ${n.port}  •  ${n.maxChannels} channels'),trailing:Wrap(spacing:0,children:[IconButton(tooltip:'Edit',onPressed:()=>showDeviceForm(context,store,n),icon:const Icon(Icons.edit_outlined)),IconButton(tooltip:'Delete',onPressed:() async {final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Delete device?'),content:Text('Remove ${n.name} and its stored credentials?'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),TextButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Delete'))]));if(ok==true) await store.remove(n.id);},icon:const Icon(Icons.delete_outline))])))),if(store.devices.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Text('Add a device to begin.'))]);
+  @override Widget build(BuildContext context)=>ListView(padding:const EdgeInsets.all(16),children:[Row(children:[Expanded(child:Text('My Devices (${store.devices.length}/5)',style:Theme.of(context).textTheme.titleLarge)),FilledButton.icon(onPressed:store.devices.length>=5?null:()=>showDeviceForm(context,store,null),icon:const Icon(Icons.add),label:const Text('Add Device'))]),const SizedBox(height:12),...store.devices.map((n)=>Card(child:ListTile(leading:const Icon(Icons.dns_outlined),title:Text(n.name),subtitle:Text([
+    'Zvektra Port 1: ${n.port}',
+    if (n.port2 != null) 'Zvektra Port 2: ${n.port2}',
+    '${n.maxChannels} channels',
+  ].join('  •  ')),trailing:Wrap(spacing:0,children:[IconButton(tooltip:'Edit',onPressed:()=>showDeviceForm(context,store,n),icon:const Icon(Icons.edit_outlined)),IconButton(tooltip:'Delete',onPressed:() async {final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Delete device?'),content:Text('Remove ${n.name} and its stored credentials?'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancel')),TextButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Delete'))]));if(ok==true) await store.remove(n.id);},icon:const Icon(Icons.delete_outline))])))),if(store.devices.isEmpty)const Padding(padding:EdgeInsets.all(24),child:Text('Add a device to begin.'))]);
 }
 
 Future<void> showDeviceForm(BuildContext context, DeviceStore store, Nvr? existing) {
@@ -300,7 +304,7 @@ class _DeviceFormState extends State<_DeviceForm> {
                       FilteringTextInputFormatter.digitsOnly,
                       LengthLimitingTextInputFormatter(5),
                     ],
-                    decoration: const InputDecoration(labelText: 'Zvektra Port 1', helperText: 'RTSP live and playback'),
+                    decoration: const InputDecoration(labelText: 'Zvektra Port 1'),
                     validator: (value) {
                       final port = int.tryParse(value ?? '');
                       return port == null || port < 1 || port > 65535
@@ -318,7 +322,7 @@ class _DeviceFormState extends State<_DeviceForm> {
                     ],
                     decoration: const InputDecoration(
                       labelText: 'Zvektra Port 2',
-                      helperText: 'Optional · Dahua Background Agent',
+                      helperText: 'Optional',
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty) return null;
@@ -1447,11 +1451,25 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         return;
       }
       final sources = [
-        StreamBuilderService.url(device, camera, start: start, end: end, password: password),
+        if (device.manufacturer == 'Hikvision')
+          'rtsp://${Uri.encodeComponent(device.username)}:${Uri.encodeComponent(password)}'
+              '@$host:${device.port}/Streaming/tracks/${camera * 100 + 1}'
+              '?starttime=${DateFormat("yyyyMMdd'T'HHmmss'Z'").format(start.toUtc())}'
+              '&endtime=${DateFormat("yyyyMMdd'T'HHmmss'Z'").format(end.toUtc())}'
+        else if (device.manufacturer == 'Uniview')
+          'rtsp://${Uri.encodeComponent(device.username)}:${Uri.encodeComponent(password)}'
+              '@$host:${device.port}/c$camera/b${start.millisecondsSinceEpoch ~/ 1000}'
+              '/e${end.millisecondsSinceEpoch ~/ 1000}/replay/'
+        else
+          StreamBuilderService.url(device, camera, start: start, end: end, password: password),
         if (device.manufacturer == 'Topcam')
           StreamBuilderService.url(device, camera, start: start, end: end,
               password: password, topcamFallback: true),
       ].whereType<String>().toList();
+      if (sources.isEmpty) {
+        _commandFeedback('Recorded playback is unavailable for this device.');
+        return;
+      }
       final gallery = await const MethodChannel('net.zvektra/snapshot_gallery')
           .invokeMethod<bool>('requiresStoragePermission');
       if (!mounted) return;
@@ -1463,7 +1481,8 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
       if (!mounted) return;
       final started = await _backgroundAgent.invokeMethod<bool>('start', {
         'sources': sources,
-        if (device.manufacturer == 'Dahua' && device.port2 != null)
+        'recorderFamily': device.manufacturer,
+        if (device.port2 != null)
           'downloadPort': int.tryParse(device.port2!),
         'start': start.millisecondsSinceEpoch,
         'end': end.millisecondsSinceEpoch,

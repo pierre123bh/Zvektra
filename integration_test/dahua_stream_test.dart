@@ -287,7 +287,7 @@ void main() {
     expect(RegExp(r'Background analysis finished\. [2-9] clips saved\.')
         .hasMatch(agentStatus?['message'] as String? ?? ''), isTrue,
         reason: 'The native service must detect events and publish clips while Flutter is offscreen');
-    expect(agentStatus?['message'], contains('Port 1 (RTSP). Read'));
+    expect(agentStatus?['message'], contains('Zvektra Port 1. Read'));
     // The RTSP port is intentionally unreachable for this second run.
     final downloadSource = Uri.parse(review.dataSource).replace(port: 8555);
     expect(await agent.invokeMethod<bool>('start', {
@@ -307,10 +307,24 @@ void main() {
         reason: 'Port 2 must download, analyze and save clips without RTSP');
     final result = agentStatus?['message'] as String;
     debugPrint(result);
-    final readSeconds = RegExp(r'Port 2\. Read ([0-9.]+)s').firstMatch(result);
+    final readSeconds = RegExp(r'Zvektra Port 2\. Read ([0-9.]+)s').firstMatch(result);
     expect(readSeconds, isNotNull, reason: 'A two-minute DAV must finish through Port 2');
     expect(double.parse(readSeconds!.group(1)!), lessThan(20),
         reason: 'Local DAV remux must read faster than RTSP playback');
+    expect(await agent.invokeMethod<bool>('start', {
+      ...agentRange,
+      'sources': [downloadSource.toString()],
+      'recorderFamily': 'Hikvision',
+      'downloadPort': 8085,
+    }), isTrue);
+    for (var attempt = 0; attempt < 125; attempt++) {
+      await tester.pump(const Duration(milliseconds: 400));
+      agentStatus = await agent.invokeMapMethod<String, dynamic>('status');
+      if (agentStatus?['running'] == false) break;
+    }
+    expect(agentStatus?['running'], isFalse);
+    expect(agentStatus?['message'], contains('Background analysis finished.'));
+    expect(agentStatus?['message'], contains('Zvektra Port 2. Read'));
     debugPrint('ZVEKTRA_PLAYBACK_DETECTION_OK');
   });
 }
