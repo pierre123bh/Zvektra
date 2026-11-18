@@ -3,3 +3,7 @@
 
 # ONNX Runtime resolves its Java bridge and tensor classes from JNI.
 -keep class ai.onnxruntime.** { *; }
+
+# Dahua looks up SDK classes and callback methods through JNI.
+-keep class com.company.NetSDK.** { *; }
+-keep class net.zvektra.zvektra.DahuaNativeDownload { *; }

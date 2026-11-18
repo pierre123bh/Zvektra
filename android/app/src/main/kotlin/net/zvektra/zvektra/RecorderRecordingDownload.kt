@@ -22,6 +22,10 @@ internal object RecorderRecordingDownload {
         val host = source.host ?: return false
         val credentials = source.encodedUserInfo?.split(':', limit = 2) ?: return false
         if (credentials.size != 2) return false
+        if (family == "Dahua" && DahuaNativeDownload.AVAILABLE) {
+            return DahuaNativeDownload.save(host, port, Uri.decode(credentials[0]),
+                Uri.decode(credentials[1]), camera, start, start + duration, timezone, file, cancelled)
+        }
         val client = RecorderHttp("http://$host:$port", Uri.decode(credentials[0]),
             Uri.decode(credentials[1]), cancelled)
         if (family == "Hikvision") {

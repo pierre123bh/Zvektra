@@ -32,6 +32,7 @@ internal class BackgroundRecording(
 ) {
     data class Result(val saved: Int, val partial: Boolean, val details: String? = null)
     private var saved = 0
+    private var nativeTransfer = ""
 
     fun run(sources: List<String>, start: Long, length: Long, camera: Int, timezone: String,
             downloadPort: Int? = null, recorderFamily: String = "Dahua"): Result {
@@ -66,7 +67,7 @@ internal class BackgroundRecording(
                 }
             }
             if (cancelled() || duration < 400) return Result(saved, true,
-                "No playable recording. Read ${seconds(SystemClock.elapsedRealtime() - jobStarted)}.$fallback")
+                "No playable recording. Read ${seconds(SystemClock.elapsedRealtime() - jobStarted)}.$fallback$nativeTransfer")
 
             val acquisitionMs = SystemClock.elapsedRealtime() - jobStarted
             stage = "scanning frames"
@@ -159,7 +160,7 @@ internal class BackgroundRecording(
                 if (failed > 0) add("$failed clips could not be saved.")
             }
             val issueText = issues.joinToString(" ", prefix = if (issues.isEmpty()) "" else " ")
-            val details = "$route. Read ${seconds(acquisitionMs)} · Scan ${seconds(analysisMs)} · Save ${seconds(savingMs)} · Total ${seconds(total)}.$fallback$issueText"
+            val details = "$route. Read ${seconds(acquisitionMs)} · Scan ${seconds(analysisMs)} · Save ${seconds(savingMs)} · Total ${seconds(total)}.$fallback$nativeTransfer$issueText"
             Log.i("BackgroundAgent", "Recording=$length ms. $details")
             return Result(saved, cancelled() || issues.isNotEmpty(), details)
         } catch (error: Exception) {
@@ -207,12 +208,22 @@ internal class BackgroundRecording(
         val raw = File.createTempFile("background-recording-", ".dav", context.cacheDir)
         // The target is end-to-end wall time, not a deadline for discarding
         // usable footage and paying for a second acquisition at RTSP speed.
-        val budgetMs = (length / 2).coerceAtLeast(4000L)
+        val native = recorderFamily == "Dahua" && DahuaNativeDownload.AVAILABLE
+        val budgetMs = if (native) length.coerceAtLeast(180_000L) else
+            (length / 2).coerceAtLeast(4000L)
         val deadline = SystemClock.elapsedRealtime() + budgetMs
         val stopFastPath = { cancelled() || SystemClock.elapsedRealtime() >= deadline }
         try {
             progress("Downloading recording through Zvektra Port 2", 0)
-            if (!RecorderRecordingDownload.save(source, outputPort, camera, start, length, timezone, recorderFamily, raw, stopFastPath)) return 0L
+            val started = SystemClock.elapsedRealtime()
+            val downloaded = RecorderRecordingDownload.save(source, outputPort, camera, start, length,
+                timezone, recorderFamily, raw, stopFastPath)
+            if (native) {
+                val status = if (downloaded) "complete" else "incomplete"
+                nativeTransfer = " Port 2 native download $status, ${raw.length()} bytes in " +
+                    "${seconds(SystemClock.elapsedRealtime() - started)}."
+            }
+            if (!downloaded) return 0L
             if (cancelled()) return 0L
             val signature = raw.inputStream().use { stream ->
                 ByteArray(5).also { stream.read(it) }.toString(Charsets.US_ASCII)

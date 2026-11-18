@@ -8,7 +8,17 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val dahuaSdk = providers.environmentVariable("DAHUA_NETSDK_DIR").orNull?.let { file(it) }
+
 android {
+    sourceSets.getByName("main").apply {
+        if (dahuaSdk == null) {
+            java.srcDir("src/noDahuaNetSdk/java")
+        } else {
+            java.srcDir("src/dahuaNetSdk/java")
+            jniLibs.srcDir(dahuaSdk.resolve("jniLibs"))
+        }
+    }
     namespace = "net.zvektra.zvektra"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
@@ -59,6 +69,7 @@ flutter {
 // Keep the newer native VLC runtime while using the bridge compatible with
 // the published Flutter platform interface.
 dependencies {
+    if (dahuaSdk != null) implementation(files(dahuaSdk.resolve("INetSDK.jar")))
     implementation("org.videolan.android:libvlc-all:3.6.3")
     // 1.20.0 keeps the app compatible with its Android 6 minimum.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")

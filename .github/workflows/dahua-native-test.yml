@@ -1,0 +1,75 @@
+name: Build Dahua native download test APK
+on:
+  push:
+    branches: [test/dahua-native-download]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Stage Dahua Android NetSDK
+        env:
+          SDK_URL: ${{ secrets.DAHUA_NETSDK_URL }}
+        run: |
+          if [ -z "$SDK_URL" ]; then
+            echo "::error::Set DAHUA_NETSDK_URL to a direct HTTPS download of the Dahua Android NetSDK archive."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/dahua.7z"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --output "$archive" "$SDK_URL"
+          echo "f359a827a035a33fa580fdb05c8fbe3441f4d7ca4b6b7a718c740cecd607df37  $archive" | sha256sum --check
+          unpacked="$RUNNER_TEMP/dahua-unpacked"
+          sdk="$RUNNER_TEMP/dahua-netsdk"
+          7z x "$archive" "-o$unpacked" >/dev/null
+          root="$unpacked/General_NetSDK_ChnEng_Android_IS_V3.061.0000001.0.R.260826"
+          mkdir -p "$sdk/jniLibs/arm64-v8a"
+          cp "$root/Lib/INetSDK.jar" "$sdk/"
+          for name in netsdk configsdk jninetsdk; do
+            cp "$root/DemoSource/AndroidDemo/app/libs/arm64-v8a/lib$name.so" "$sdk/jniLibs/arm64-v8a/"
+          done
+          echo "DAHUA_NETSDK_DIR=$sdk" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.3'
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - run: flutter build apk --release --target-platform android-arm64 --split-per-abi
+      - name: Verify native test APK
+        run: |
+          mkdir -p dist
+          apk=dist/Zvektra-Dahua-Native-Test.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "$apk"
+          python3 - "$apk" <<'PY'
+          import sys
+          from zipfile import ZipFile
+          with ZipFile(sys.argv[1]) as apk:
+              assert apk.testzip() is None
+              entries = set(apk.namelist())
+              for library in ("netsdk", "configsdk", "jninetsdk"):
+                  assert f"lib/arm64-v8a/lib{library}.so" in entries
+              dex = b"".join(apk.read(name) for name in entries if name.endswith(".dex"))
+              assert b"Lcom/company/NetSDK/INetSDK;" in dex
+              assert b"Lnet/zvektra/zvektra/DahuaNativeDownload;" in dex
+          PY
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          "$apksigner" verify --verbose "$apk"
+          (cd dist && sha256sum Zvektra-Dahua-Native-Test.apk > Zvektra-Dahua-Native-Test.apk.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zvektra-dahua-native-test
+          path: dist/
+          if-no-files-found: error
