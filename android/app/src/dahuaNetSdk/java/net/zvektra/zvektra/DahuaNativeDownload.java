@@ -6,6 +6,9 @@ import com.company.NetSDK.EM_USEDEV_MODE;
 import com.company.NetSDK.INetSDK;
 import com.company.NetSDK.NET_DEVICEINFO_Ex;
 import com.company.NetSDK.NET_TIME;
+import com.company.NetSDK.NET_IN_SNAP_PIC_FROM_REC;
+import com.company.NetSDK.NET_OUT_SNAP_PIC_FROM_REC;
+import java.util.Arrays;
 
 import java.io.File;
 import java.util.Calendar;
@@ -14,8 +17,49 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import kotlin.jvm.functions.Function0;
+import kotlin.jvm.functions.Function2;
 
 final class DahuaNativeDownload {
+
+    static synchronized String scan(String host, int port, String user, String password,
+                                    int camera, long start, long end, String timezone,
+                                    Function0<Boolean> cancelled,
+                                    Function2<Long, byte[], Boolean> consume) {
+        if (cancelled.invoke()) return "Stopped";
+        if (!INetSDK.Init((login, ip, serverPort) -> {})) return "SDK initialization failed";
+        try {
+            INetSDK.SetConnectTime(3000, 1);
+            long login = INetSDK.LoginEx2(host, port, user, password, 0, null,
+                    new NET_DEVICEINFO_Ex(), 0);
+            if (login == 0) return "Login failed, SDK error " + INetSDK.GetLastError();
+            try {
+                NET_OUT_SNAP_PIC_FROM_REC image = new NET_OUT_SNAP_PIC_FROM_REC(8 * 1024 * 1024);
+                for (long timestamp = start; timestamp < end; timestamp += 5000) {
+                    if (cancelled.invoke()) return "Stopped";
+                    NET_IN_SNAP_PIC_FROM_REC request = new NET_IN_SNAP_PIC_FROM_REC();
+                    request.nChannel = camera - 1;
+                    request.nStreamType = 0;
+                    request.stuTime = time(timestamp, timezone);
+                    image.nRetLen = 0;
+                    if (!INetSDK.SnapPicFromRecord(login, request, image, 5000)) {
+                        return "Historical snapshot failed at " + ((timestamp - start) / 1000)
+                                + "s, SDK error " + INetSDK.GetLastError();
+                    }
+                    if (image.nRetLen <= 0 || image.nRetLen > image.pPicBuf.length) {
+                        return "Historical snapshot returned invalid image size";
+                    }
+                    if (cancelled.invoke() || !consume.invoke(timestamp,
+                            Arrays.copyOf(image.pPicBuf, image.nRetLen))) return "Stopped";
+                }
+                return null;
+            } finally {
+                INetSDK.Logout(login);
+            }
+        } finally {
+            INetSDK.Cleanup();
+        }
+    }
+
     static final boolean AVAILABLE = true;
 
     // NetSDK initialization and cleanup apply to the entire process.
