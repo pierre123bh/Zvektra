@@ -151,7 +151,7 @@ internal object RecorderRecordingDownload {
         }
     }
 
-    private fun digest(challenge: String, user: String, password: String, method: String, path: String): String? {
+    internal fun digest(challenge: String, user: String, password: String, method: String, path: String): String? {
         val fields = Regex("""([\w-]+)\s*=\s*(?:"([^"]*)"|([^,\s]+))""")
             .findAll(challenge).associate { match ->
                 match.groupValues[1].lowercase(Locale.US) to

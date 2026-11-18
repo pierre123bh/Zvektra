@@ -24,7 +24,6 @@ import java.util.TimeZone
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
@@ -60,7 +59,7 @@ internal class BackgroundRecording(
                 progress("Reading recording through Zvektra Port 1", 0)
                 val rtsp = File.createTempFile("background-recording-", ".mp4", context.cacheDir)
                 try {
-                    val capture = capturePlayback(sources, rtsp, length, tryFast = recorderFamily == "Dahua" && length >= 10000)
+                    val capture = capturePlayback(sources, rtsp, length, tryFast = length >= 10000)
                     val rtspDuration = capture.duration
                     playbackTest = capture.speedSummary
                     if (rtspDuration > duration && rtsp.renameTo(input)) {
@@ -184,7 +183,7 @@ internal class BackgroundRecording(
         duration >= 400 && length - duration <= minOf(2000L, length / 10)
 
     private data class RecordedPlayback(val duration: Long, val speedSummary: String)
-    private data class CaptureState(val rateRequested: Boolean, val state: String, val bytes: Long) {
+    private data class CaptureState(val state: String, val bytes: Long) {
         fun describe() = "$state, ${bytes / 1024} KiB written"
     }
 
@@ -196,28 +195,39 @@ internal class BackgroundRecording(
             for (source in sources) {
                 val uri = Uri.parse(source)
                 require(uri.scheme == "rtsp" && !uri.host.isNullOrEmpty())
-                var attempts = listOf(true, false)
                 if (tryFast && !cancelled()) {
                     attempt.delete()
                     progress("Testing 8× through Zvektra Port 1", 0)
                     val started = SystemClock.elapsedRealtime()
-                    val fastCapture = capture(uri, attempt, length, videoOnly = true, rate = 8f)
+                    var playSent = false
+                    var playReply = "no reply"
+                    val fastCapture = try {
+                        ScaledRtspSession(uri).use { session ->
+                            val result = capture(session.localUri, attempt, length, videoOnly = true,
+                                maxWallTime = (length / 8) + 12000L)
+                            playSent = session.playSent
+                            playReply = session.playReply
+                            result
+                        }
+                    } catch (error: Exception) {
+                        Log.w("BackgroundAgent", "Scaled playback failed (${error.javaClass.simpleName})")
+                        CaptureState("capture failed", 0L)
+                    }
                     val elapsed = (SystemClock.elapsedRealtime() - started).coerceAtLeast(1)
                     val duration = videoDuration(attempt)
                     val deliveredRate = String.format(Locale.US, "%.1f", duration.toDouble() / elapsed)
                     val sparse = coversRange(duration, length) && !hasContinuousSamples(attempt)
-                    val request = if (fastCapture.rateRequested) "8× requested" else "8× could not be requested"
+                    val request = if (playSent) "8× requested ($playReply)" else "8× could not be requested"
                     speedSummary = " $request. Received ${seconds(duration)} in ${seconds(elapsed)} (effective ${deliveredRate}×)." +
                         if (sparse) " Frame gaps detected. Retrying at normal speed." else ""
                     if (!cancelled() && coversRange(duration, length) && !sparse && attempt.renameTo(input)) {
                         return RecordedPlayback(duration, speedSummary)
                     }
                     if (duration < 400) speedSummary += " First capture: ${fastCapture.describe()}."
-                    if (!fastCapture.rateRequested && duration < 400) attempts = listOf(false)
                     if (!sparse) speedSummary += " Retrying at normal speed."
                     progress("Retrying at normal speed through Zvektra Port 1", 0)
                 }
-                for (videoOnly in attempts) {
+                for (videoOnly in listOf(true, false)) {
                     if (cancelled()) return RecordedPlayback(best, speedSummary)
                     attempt.delete()
                     val normalCapture = capture(uri, attempt, length, videoOnly)
@@ -305,16 +315,14 @@ internal class BackgroundRecording(
     }
 
     private fun capture(source: Uri, file: File, length: Long, videoOnly: Boolean,
-                        local: Boolean = false, dav: Boolean = false, rate: Float = 1f, stop: () -> Boolean = cancelled): CaptureState {
+                        local: Boolean = false, dav: Boolean = false, maxWallTime: Long = length + 20000L, stop: () -> Boolean = cancelled): CaptureState {
         val vlc = LibVLC(context, arrayListOf("--rtsp-tcp", "--network-caching=1000"))
         try {
             val player = MediaPlayer(vlc)
             val state = AtomicReference("waiting for playback")
-            var rateRequested = false
             try {
                 val done = CountDownLatch(1)
                 val position = AtomicLong(0)
-                val playing = AtomicBoolean(false)
                 val media = Media(vlc, source)
                 try {
                     media.addOption(":sout=#std{access=file,mux=mp4,dst=" + file.absolutePath + "}")
@@ -344,7 +352,6 @@ internal class BackgroundRecording(
                         }
                         MediaPlayer.Event.TimeChanged -> position.set(event.timeChanged)
                         MediaPlayer.Event.Playing -> {
-                            playing.set(true)
                             state.set("playing")
                         }
                     }
@@ -356,10 +363,6 @@ internal class BackgroundRecording(
                 var lastGrowth = captureStarted
                 var lastPosition = 0L
                 while (!stop() && !done.await(if (local) 100 else 1000, TimeUnit.MILLISECONDS)) {
-                    if (!rateRequested && rate != 1f && playing.get()) {
-                        rateRequested = runCatching { player.setRate(rate) }.isSuccess
-                        playing.set(false)
-                    }
                     val bytes = file.length()
                     val elapsed = position.get()
                     val now = SystemClock.elapsedRealtime()
@@ -367,7 +370,7 @@ internal class BackgroundRecording(
                     lastBytes = bytes
                     lastPosition = elapsed
                     val idleLimit = if (elapsed == 0L && !local) 20000L else 15000L
-                    if ((!local && now - captureStarted >= length + 20000L) ||
+                    if ((!local && now - captureStarted >= maxWallTime) ||
                         now - lastGrowth >= idleLimit || context.cacheDir.usableSpace < 64L * 1024 * 1024) break
                     progress("Reading recording", (elapsed.coerceIn(0, length) * 45 / length).toInt())
                 }
@@ -376,7 +379,7 @@ internal class BackgroundRecording(
                 runCatching { player.stop() }
                 player.release()
             }
-            return CaptureState(rateRequested, state.get(), file.length())
+            return CaptureState(state.get(), file.length())
         } finally {
             vlc.release()
         }

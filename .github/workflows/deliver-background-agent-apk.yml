@@ -1,7 +1,7 @@
-name: Publish verified Background Agent Capture APK
+name: Publish verified Background Agent RTSP Scale APK
 on:
   push:
-    branches: [delivery/background-agent-capture-start]
+    branches: [delivery/background-agent-rtsp-scale]
 permissions:
   actions: read
   contents: read
@@ -18,7 +18,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: background-agent-capture-start-${{ github.run_id }}
+      RELEASE_TAG: background-agent-rtsp-scale-${{ github.run_id }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -28,5 +28,5 @@ jobs:
           sha256sum --check Zvektra-ARM64.apk.sha256
           gh release create "$RELEASE_TAG" Zvektra-ARM64.apk \
             --target "$GITHUB_SHA" --prerelease --latest=false \
-            --title "Zvektra Android — Background Agent Capture" \
-            --notes "Verified ARM64 build with Background Agent Port 1 startup tolerance and capture diagnostics."
+            --title "Zvektra Android — Background Agent RTSP Scale" \
+            --notes "Verified ARM64 build with Background Agent direct 8x PLAY commands and recorder reply reporting."
