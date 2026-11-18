@@ -6,6 +6,7 @@ on:
     paths:
       - 'lib/**'
       - 'integration_test/**'
+      - 'test/device_form_test.dart'
       - 'pubspec.yaml'
       - 'android/**'
       - '.github/workflows/rtsp-smoke.yml'
