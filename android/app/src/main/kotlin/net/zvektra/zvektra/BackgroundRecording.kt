@@ -51,7 +51,8 @@ internal class BackgroundRecording(
             val fallback = if (downloadPort != null && !supportsDownload) {
                 " Zvektra Port 2 download is unavailable for this device."
             } else if (downloadPort != null && !coversRange(duration, length)) {
-                " Zvektra Port 2 supplied ${seconds(duration)} before fallback."
+                if (cancelled()) " Stopped before trying Zvektra Port 1." else
+                    " Tried Zvektra Port 1 after Port 2 supplied ${seconds(duration)}."
             } else ""
             if (!coversRange(duration, length) && !cancelled()) {
                 progress("Reading recording through Zvektra Port 1", 0)
@@ -209,17 +210,31 @@ internal class BackgroundRecording(
         // The target is end-to-end wall time, not a deadline for discarding
         // usable footage and paying for a second acquisition at RTSP speed.
         val native = recorderFamily == "Dahua" && DahuaNativeDownload.AVAILABLE
-        val budgetMs = if (native) length.coerceAtLeast(180_000L) else
+        val budgetMs = if (native) (length / 6).coerceIn(5_000L, 20_000L) else
             (length / 2).coerceAtLeast(4000L)
-        val deadline = SystemClock.elapsedRealtime() + budgetMs
+        val started = SystemClock.elapsedRealtime()
+        val deadline = started + budgetMs
         val stopFastPath = { cancelled() || SystemClock.elapsedRealtime() >= deadline }
+        var lastUpdate = started
+        val stopTransfer = {
+            val now = SystemClock.elapsedRealtime()
+            if (native && now - lastUpdate >= 1000 && !stopFastPath()) {
+                lastUpdate = now
+                progress("Zvektra Port 2: ${raw.length() / 1024} KiB received · ${seconds(now - started)}", 0)
+            }
+            stopFastPath()
+        }
         try {
             progress("Downloading recording through Zvektra Port 2", 0)
-            val started = SystemClock.elapsedRealtime()
             val downloaded = RecorderRecordingDownload.save(source, outputPort, camera, start, length,
-                timezone, recorderFamily, raw, stopFastPath)
+                timezone, recorderFamily, raw, stopTransfer)
             if (native) {
-                val status = if (downloaded) "complete" else "incomplete"
+                val status = when {
+                    downloaded -> "complete"
+                    cancelled() -> "stopped"
+                    stopFastPath() -> "timed out"
+                    else -> "incomplete"
+                }
                 nativeTransfer = " Port 2 native download $status, ${raw.length()} bytes in " +
                     "${seconds(SystemClock.elapsedRealtime() - started)}."
             }
@@ -238,7 +253,7 @@ internal class BackgroundRecording(
                 output.delete()
                 progress("Preparing Zvektra Port 2 recording", 30)
                 capture(Uri.fromFile(raw), output, length, videoOnly = true,
-                    local = true, dav = dahua, stop = stopFastPath)
+                    local = true, dav = dahua, stop = if (native) cancelled else stopFastPath)
                 if (cancelled()) return 0L
             }
             return videoDuration(output)
