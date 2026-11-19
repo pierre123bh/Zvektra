@@ -112,9 +112,12 @@ internal class BackgroundRecording(
         try {
             if (saved > 0 && !cancelled()) {
                 progress("Creating snapshot PDF", 95)
-                SnapshotReport.save(context, deviceName, camera, start, start + length, timezone, reportImages,
-                    error != null, cancelled)
-                pdf = " PDF saved in Downloads/Zvektra."
+                val parts = reportImages.chunked(50)
+                for ((index, images) in parts.withIndex()) {
+                    SnapshotReport.save(context, deviceName, camera, start, start + length, timezone, images,
+                        error != null, cancelled, index + 1, parts.size)
+                }
+                pdf = " ${parts.size} PDF report(s) saved in Downloads/Zvektra."
             }
         } catch (_: Exception) { error = listOfNotNull(error, "Images saved, but PDF export failed").joinToString(". ") }
         finally { reportImages.forEach { it.second.delete() } }

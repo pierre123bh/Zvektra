@@ -19,10 +19,10 @@ import java.util.TimeZone
 
 internal object SnapshotReport {
     fun save(context: Context, deviceName: String, camera: Int, start: Long, end: Long, timezone: String,
-             images: List<Pair<Long, File>>, partial: Boolean, cancelled: () -> Boolean) {
+             images: List<Pair<Long, File>>, partial: Boolean, cancelled: () -> Boolean, part: Int, totalParts: Int) {
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply { timeZone = TimeZone.getTimeZone(timezone) }
         val nameTime = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).apply { timeZone = TimeZone.getTimeZone(timezone) }
-        val name = "Zvektra-Cam$camera-${nameTime.format(Date(start))}-${System.currentTimeMillis()}.pdf"
+        val name = "Zvektra-Cam$camera-${nameTime.format(Date(start))}-part${part}-of-$totalParts-${System.currentTimeMillis()}.pdf"
         val document = PdfDocument()
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 10f }
         try {
@@ -33,7 +33,7 @@ internal object SnapshotReport {
                 paint.textSize = 17f
                 canvas.drawText("Zvektra — Snapshot report${if (partial) " (partial)" else ""}", 30f, 32f, paint)
                 paint.textSize = 10f
-                canvas.drawText("${deviceName.take(40)} | Camera $camera | $timezone | Page ${pageIndex + 1}", 30f, 51f, paint)
+                canvas.drawText("${deviceName.take(30)} | Cam $camera | $timezone | Part $part/$totalParts | Page ${pageIndex + 1}", 30f, 51f, paint)
                 canvas.drawText("${time.format(Date(start))} to ${time.format(Date(end))}", 30f, 67f, paint)
                 canvas.drawText("People/vehicles; similar images grouped. Automated detections may miss objects.", 30f, 82f, paint)
                 for ((index, image) in group.withIndex()) {
