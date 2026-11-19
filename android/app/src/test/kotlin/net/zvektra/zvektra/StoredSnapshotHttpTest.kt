@@ -1,6 +1,5 @@
 package net.zvektra.zvektra
 
-import com.sun.net.httpserver.HttpServer
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.IOException
