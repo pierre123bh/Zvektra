@@ -47,6 +47,9 @@ jobs:
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
       - run: flutter build apk --release --target-platform android-arm64 --split-per-abi
+      - name: Test stored-snapshot archive protocols
+        working-directory: android
+        run: ./gradlew :app:testReleaseUnitTest
       - name: Verify native test APK
         run: |
           mkdir -p dist

@@ -39,7 +39,7 @@ class BackgroundAgentService : Service() {
         }
 
         internal fun start(context: Context, sources: ArrayList<String>, start: Long,
-                           end: Long, camera: Int, timezone: String, downloadPort: Int?, recorderFamily: String): Boolean {
+                           end: Long, camera: Int, timezone: String, downloadPort: Int?, recorderFamily: String, deviceName: String): Boolean {
             if (running) return false
             running = true
             try {
@@ -51,6 +51,7 @@ class BackgroundAgentService : Service() {
                     .putExtra("timezone", timezone)
                     .putExtra("downloadPort", downloadPort ?: 0)
                     .putExtra("recorderFamily", recorderFamily)
+                    .putExtra("deviceName", deviceName)
                 androidx.core.content.ContextCompat.startForegroundService(context, intent)
             } catch (error: RuntimeException) {
                 running = false
@@ -93,6 +94,7 @@ class BackgroundAgentService : Service() {
         val camera = intent?.getIntExtra("camera", 0) ?: 0
         val timezone = intent?.getStringExtra("timezone") ?: "UTC"
         val recorderFamily = intent?.getStringExtra("recorderFamily") ?: "Dahua"
+        val deviceName = intent?.getStringExtra("deviceName") ?: "Recorder"
         val downloadPort = intent?.getIntExtra("downloadPort", 0)?.takeIf { it in 1..65535 }
         if (sources.isNullOrEmpty() || start <= 0 || end <= start || camera <= 0) {
             running = false
@@ -101,7 +103,7 @@ class BackgroundAgentService : Service() {
         }
         working = true
         running = true
-        startForeground(WORK_NOTIFICATION, notification("Opening recording", 0))
+        startForeground(WORK_NOTIFICATION, notification("Searching stored snapshots", 0))
         notifications.cancel(DONE_NOTIFICATION)
         saveStatus(true, "Background analysis is running.")
         val power = getSystemService(PowerManager::class.java)
@@ -110,7 +112,7 @@ class BackgroundAgentService : Service() {
         }
         worker.execute {
             cacheDir.listFiles()?.filter {
-                it.name.startsWith("background-recording-") || it.name.startsWith("background-clip-")
+                it.name.startsWith("background-image-")
             }?.forEach { it.delete() }
             var lastUpdate = 0L
             val result = BackgroundRecording(applicationContext, { cancelled }) { message, percent ->
@@ -121,7 +123,7 @@ class BackgroundAgentService : Service() {
                         if (working && !cancelled) notifications.notify(WORK_NOTIFICATION, notification(message, percent))
                     }
                 }
-            }.run(sources, start, end - start, camera, timezone, downloadPort, recorderFamily)
+            }.run(sources, start, end - start, camera, timezone, downloadPort, recorderFamily, deviceName)
             main.post { if (working) finish(result) }
         }
         return START_NOT_STICKY
@@ -162,7 +164,9 @@ class BackgroundAgentService : Service() {
             result.partial -> "Background analysis incomplete."
             else -> "Background analysis finished."
         }
-        val message = "$outcome $count"
+        val message = if (!cancelled && !result.partial && result.saved == 0 &&
+            result.details?.startsWith("No snapshots detected") == true)
+            "No snapshots detected for that date and time." else "$outcome $count"
         val summary = listOfNotNull(message, result.details).joinToString("\n")
         saveStatus(false, summary)
         notifications.notify(DONE_NOTIFICATION, notification(summary))
@@ -195,9 +199,9 @@ class BackgroundAgentService : Service() {
     override fun onTimeout(startId: Int, fgsType: Int) {
         cancelled = true
         expired = true
-        saveStatus(false, "Background analysis reached Android's time limit. Check your gallery for saved clips.")
+        saveStatus(false, "Background analysis reached Android's time limit. Check your gallery for saved images.")
         notifications.notify(DONE_NOTIFICATION,
-            notification("Background analysis reached Android's time limit. Check your gallery for saved clips."))
+            notification("Background analysis reached Android's time limit. Check your gallery for saved images."))
         stopSelf()
     }
 

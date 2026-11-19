@@ -25,10 +25,11 @@ class Nvr {
   final int maxChannels;
   final String? port2;
   final String? streamProtocol;
-  const Nvr({required this.id,required this.name,required this.manufacturer,required this.port,required this.username,required this.maxChannels,this.port2,this.streamProtocol});
-  Map<String,dynamic> toJson()=>{'id':id,'name':name,'manufacturer':manufacturer,'port':port,'port2':port2,'streamProtocol':streamProtocol,'username':username,'maxChannels':maxChannels};
-  factory Nvr.fromJson(Map<String,dynamic> x)=>Nvr(id:x['id'],name:x['name'],manufacturer:x['manufacturer'],port:x['port'],port2:x['port2'] as String?,streamProtocol:x['streamProtocol'] as String?,username:x['username'],maxChannels:x['maxChannels']);
-  Nvr copyWith({String? name,String? manufacturer,String? port,String? username,int? maxChannels,String? streamProtocol})=>Nvr(id:id,name:name??this.name,manufacturer:manufacturer??this.manufacturer,port:port??this.port,port2:port2,streamProtocol:streamProtocol??this.streamProtocol,username:username??this.username,maxChannels:maxChannels??this.maxChannels);
+  final String? archiveApi;
+  const Nvr({required this.id,required this.name,required this.manufacturer,required this.port,required this.username,required this.maxChannels,this.port2,this.streamProtocol,this.archiveApi});
+  Map<String,dynamic> toJson()=>{'id':id,'name':name,'manufacturer':manufacturer,'port':port,'port2':port2,'streamProtocol':streamProtocol,'archiveApi':archiveApi,'username':username,'maxChannels':maxChannels};
+  factory Nvr.fromJson(Map<String,dynamic> x)=>Nvr(id:x['id'],name:x['name'],manufacturer:x['manufacturer'],port:x['port'],port2:x['port2'] as String?,streamProtocol:x['streamProtocol'] as String?,archiveApi:x['archiveApi'] as String?,username:x['username'],maxChannels:x['maxChannels']);
+  Nvr copyWith({String? name,String? manufacturer,String? port,String? username,int? maxChannels,String? streamProtocol,String? archiveApi})=>Nvr(id:id,name:name??this.name,manufacturer:manufacturer??this.manufacturer,port:port??this.port,port2:port2,streamProtocol:streamProtocol??this.streamProtocol,archiveApi:archiveApi??this.archiveApi,username:username??this.username,maxChannels:maxChannels??this.maxChannels);
 }
 
 class DeviceStore extends ChangeNotifier {
@@ -246,6 +247,7 @@ class _DeviceFormState extends State<_DeviceForm> {
   final _password = TextEditingController();
   late String _manufacturer = widget.existing?.manufacturer ?? 'Dahua';
   late String? _streamProtocol = widget.existing?.streamProtocol;
+  late String? _archiveApi = widget.existing?.archiveApi;
   late final String _id = widget.existing?.id ??
       DateTime.now().microsecondsSinceEpoch.toString();
   bool _saving = false;
@@ -274,6 +276,7 @@ class _DeviceFormState extends State<_DeviceForm> {
       name: _name.text.trim(),
       manufacturer: _manufacturer,
       streamProtocol: _streamProtocol,
+      archiveApi: _archiveApi,
       port: int.parse(_port.text).toString(),
       port2: _port2.text.isEmpty ? null : int.parse(_port2.text).toString(),
       username: _user.text.trim(),
@@ -330,7 +333,7 @@ class _DeviceFormState extends State<_DeviceForm> {
                     items: manufacturers.map((name) =>
                         DropdownMenuItem(value: name, child: Text(name))).toList(),
                     onChanged: _saving ? null : (value) {
-                      if (value != null) setState(() { _manufacturer = value; _streamProtocol = null; });
+                      if (value != null) setState(() { _manufacturer = value; _streamProtocol = null; _archiveApi = null; });
                     },
                   ),
                   if (_manufacturer == 'Topcam' || _manufacturer == 'MEye')
@@ -382,6 +385,15 @@ class _DeviceFormState extends State<_DeviceForm> {
                       }
                       return null;
                     },
+                  ),
+                  DropdownButtonFormField<String>(
+                    value: _archiveApi ?? 'Automatic',
+                    decoration: const InputDecoration(labelText: 'Snapshot archive API'),
+                    items: const ['Automatic', 'Dahua', 'Dahua HTTP', 'Hikvision', 'Xiongmai', 'Uniview']
+                        .map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
+                    onChanged: _saving ? null : (value) => setState(() {
+                      _archiveApi = value == 'Automatic' ? null : value;
+                    }),
                   ),
                   TextFormField(
                     controller: _channels,
@@ -1494,37 +1506,26 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
         return;
       }
       final sources = [
-        if (device.manufacturer == 'Hikvision')
-          'rtsp://${Uri.encodeComponent(device.username)}:${Uri.encodeComponent(password)}'
-              '@$host:${device.port}/Streaming/tracks/${camera * 100 + 1}'
-              '?starttime=${DateFormat("yyyyMMdd'T'HHmmss'Z'").format(start.toUtc())}'
-              '&endtime=${DateFormat("yyyyMMdd'T'HHmmss'Z'").format(end.toUtc())}'
-        else if (device.manufacturer == 'Uniview')
-          'rtsp://${Uri.encodeComponent(device.username)}:${Uri.encodeComponent(password)}'
-              '@$host:${device.port}/c$camera/b${start.millisecondsSinceEpoch ~/ 1000}'
-              '/e${end.millisecondsSinceEpoch ~/ 1000}/replay/'
-        else
-          StreamBuilderService.url(device, camera, start: start, end: end, password: password),
-        if (device.manufacturer == 'Topcam')
-          StreamBuilderService.url(device, camera, start: start, end: end,
-              password: password, topcamFallback: true),
-      ].whereType<String>().toList();
-      if (sources.isEmpty) {
-        _commandFeedback('Recorded playback is unavailable for this device.');
+        'rtsp://${Uri.encodeComponent(device.username)}:${Uri.encodeComponent(password)}'
+            '@$host:${device.port}/stored-images',
+      ];
+      if (device.port2 == null) {
+        _commandFeedback('Set Zvektra Port 2 to the snapshot archive API port.');
         return;
       }
       final gallery = await const MethodChannel('net.zvektra/snapshot_gallery')
           .invokeMethod<bool>('requiresStoragePermission');
       if (!mounted) return;
       if (gallery == true && !(await Permission.storage.request()).isGranted) {
-        if (mounted) _commandFeedback('Allow storage access to save clips to your gallery.');
+        if (mounted) _commandFeedback('Allow storage access to save images and PDF reports.');
         return;
       }
       await Permission.notification.request();
       if (!mounted) return;
       final started = await _backgroundAgent.invokeMethod<bool>('start', {
         'sources': sources,
-        'recorderFamily': device.manufacturer,
+        'deviceName': device.name,
+        'recorderFamily': device.archiveApi ?? device.streamProtocol ?? device.manufacturer,
         if (device.port2 != null)
           'downloadPort': int.tryParse(device.port2!),
         'start': start.millisecondsSinceEpoch,

@@ -12,6 +12,7 @@ void main() {
     });
     expect(device.port, '1554');
     expect(device.port2, isNull);
+    expect(device.archiveApi, isNull);
     expect(Uri.parse(StreamBuilderService.url(device, 1, password: 'fixture')!).port, 1554);
   });
 

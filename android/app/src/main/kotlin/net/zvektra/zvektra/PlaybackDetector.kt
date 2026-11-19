@@ -68,7 +68,17 @@ internal class PlaybackDetector(private val context: Context) : AutoCloseable {
         }
     }
 
-    private fun peopleIn(frame: Bitmap, model: OrtSession): List<RectF> {
+    fun snapshotKinds(frame: Bitmap): Set<String> {
+        val model = people ?: load("people").also { people = it }
+        val classes = mutableSetOf<Int>()
+        peopleIn(frame, model, setOf(1, 2, 3, 4, 6, 8), classes)
+        return buildSet {
+            if (1 in classes) add("person")
+            if (classes.any { it != 1 }) add("vehicle")
+        }
+    }
+
+    private fun peopleIn(frame: Bitmap, model: OrtSession, classesWanted: Set<Int> = setOf(1), foundClasses: MutableSet<Int>? = null): List<RectF> {
         // SSD MobileNet consumes NHWC RGB bytes and returns normalized YXYX boxes.
         val size = 300
         val layout = letterbox(frame, size)
@@ -90,7 +100,8 @@ internal class PlaybackDetector(private val context: Context) : AutoCloseable {
                 val classes = (outputs.getValue("detection_classes") as Array<FloatArray>)[0]
                 @Suppress("UNCHECKED_CAST")
                 val scores = (outputs.getValue("detection_scores") as Array<FloatArray>)[0]
-                boxes.indices.filter { classes[it] == 1f && scores[it] >= 0.5f }.map { i ->
+                boxes.indices.filter { classes[it].toInt() in classesWanted && scores[it] >= 0.5f }.map { i ->
+                    foundClasses?.add(classes[i].toInt())
                     val (top, left, bottom, right) = boxes[i]
                     layout.toSource(left * size, top * size, right * size, bottom * size)
                 }

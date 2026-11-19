@@ -74,6 +74,8 @@ dependencies {
     // 1.20.0 keeps the app compatible with its Android 6 minimum.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     androidTestImplementation("androidx.test:runner:1.2.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
 
 // Bundle pinned weights in the APK so playback detection works offline.

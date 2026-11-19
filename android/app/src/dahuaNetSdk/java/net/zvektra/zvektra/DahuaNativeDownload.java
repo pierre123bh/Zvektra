@@ -9,6 +9,14 @@ import com.company.NetSDK.NET_TIME;
 
 import java.io.File;
 import java.io.IOException;
+import kotlin.jvm.functions.Function2;
+import com.company.NetSDK.NET_IN_MEDIA_QUERY_FILE;
+import com.company.NetSDK.NET_OUT_MEDIA_QUERY_FILE;
+import com.company.NetSDK.EM_FILE_QUERY_TYPE;
+import com.company.NetSDK.SDK_IN_DOWNLOAD_REMOTE_FILE;
+import com.company.NetSDK.SDK_OUT_DOWNLOAD_REMOTE_FILE;
+import java.io.FileInputStream;
+import java.util.HashSet;
 import java.util.ArrayList;
 import com.company.NetSDK.NET_RECORDFILE_INFO;
 import java.util.Calendar;
@@ -61,6 +69,71 @@ final class DahuaNativeDownload {
         } finally {
             INetSDK.Cleanup();
         }
+    }
+
+    // Searches stored JPEG files only. Never calls video playback or live snapshot APIs.
+    static synchronized int snapshots(String host, int port, String user, String password,
+            int camera, long start, long end, String timezone, File cache,
+            Function0<Boolean> cancelled, Function2<Long, byte[], Boolean> consume) throws IOException {
+        if (cancelled.invoke()) return 0;
+        if (!INetSDK.Init((login, ip, serverPort) -> {})) throw new IOException("SDK initialization failed");
+        try {
+            INetSDK.SetConnectTime(3000, 1);
+            long login = INetSDK.LoginEx2(host, port, user, password, 0, null, new NET_DEVICEINFO_Ex(), 0);
+            if (login == 0) throw new IOException("Snapshot login failed, SDK error " + INetSDK.GetLastError());
+            try {
+                NET_IN_MEDIA_QUERY_FILE query = new NET_IN_MEDIA_QUERY_FILE();
+                query.nChannelID = camera - 1;
+                query.stuStartTime = time(start, timezone);
+                query.stuEndTime = time(end, timezone);
+                query.nMediaType = 1; // SDK: 1=JPG; 2=DAV video (never requested).
+                int type = EM_FILE_QUERY_TYPE.SDK_FILE_QUERY_FILE;
+                long find = INetSDK.FindFileEx(login, type, query, 5000);
+                if (find == 0) {
+                    int error = INetSDK.GetLastError();
+                    if ((error & 0x7fffffff) == 24) return 0;
+                    throw new IOException("Stored snapshot search failed, SDK error " + error);
+                }
+                int found = 0;
+                HashSet<String> seen = new HashSet<>();
+                try {
+                    while (!cancelled.invoke()) {
+                        NET_OUT_MEDIA_QUERY_FILE[] page = new NET_OUT_MEDIA_QUERY_FILE[32];
+                        for (int i = 0; i < page.length; i++) page[i] = new NET_OUT_MEDIA_QUERY_FILE();
+                        int count = INetSDK.FindNextFileEx(find, type, page, 5000);
+                        if (count < 0 || count > page.length) throw new IOException("Snapshot page failed, SDK error " + INetSDK.GetLastError());
+                        for (int i = 0; i < count && !cancelled.invoke(); i++) {
+                            NET_OUT_MEDIA_QUERY_FILE item = page[i];
+                            String name = new String(item.szFilePath);
+                            int nullAt = name.indexOf(0);
+                            if (nullAt >= 0) name = name.substring(0, nullAt);
+                            long timestamp = epoch(item.stuStartTime, timezone);
+                            if (item.byFileType != 1 || item.nChannelID != camera - 1 || timestamp < start || timestamp >= end) continue;
+                            if (!seen.add(name)) throw new IOException("Snapshot pagination repeated a file; results are incomplete");
+                            if (name.isEmpty() || item.nFileSize < 1 || item.nFileSize > 16 * 1024 * 1024) throw new IOException("Stored snapshot has invalid size or path");
+                            if (++found > 10000) throw new IOException("Snapshot limit reached; choose a shorter time range");
+                            File file = File.createTempFile("background-image-", ".jpg", cache);
+                            try {
+                                SDK_IN_DOWNLOAD_REMOTE_FILE request = new SDK_IN_DOWNLOAD_REMOTE_FILE();
+                                request.pszFileName = name;
+                                request.pszFileDst = file.getAbsolutePath();
+                                if (!INetSDK.DownloadRemoteFile(login, request, new SDK_OUT_DOWNLOAD_REMOTE_FILE(), 15000))
+                                    throw new IOException("Stored JPEG download failed, SDK error " + INetSDK.GetLastError());
+                                if (file.length() < 4 || file.length() > 16 * 1024 * 1024) throw new IOException("Invalid stored JPEG length");
+                                byte[] jpeg = new byte[(int) file.length()];
+                                try (FileInputStream input = new FileInputStream(file)) {
+                                    int offset = 0;
+                                    while (offset < jpeg.length) { int n = input.read(jpeg, offset, jpeg.length - offset); if (n < 0) throw new IOException("Truncated JPEG"); offset += n; }
+                                }
+                                if (!consume.invoke(timestamp, jpeg)) return found;
+                            } finally { file.delete(); }
+                        }
+                        if (count < page.length) break;
+                    }
+                    return found;
+                } finally { INetSDK.FindCloseEx(find); }
+            } finally { INetSDK.Logout(login); }
+        } finally { INetSDK.Cleanup(); }
     }
 
     private static long epoch(NET_TIME time, String timezone) {
