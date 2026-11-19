@@ -24,10 +24,11 @@ class Nvr {
   final String id, name, manufacturer, port, username;
   final int maxChannels;
   final String? port2;
-  const Nvr({required this.id,required this.name,required this.manufacturer,required this.port,required this.username,required this.maxChannels,this.port2});
-  Map<String,dynamic> toJson()=>{'id':id,'name':name,'manufacturer':manufacturer,'port':port,'port2':port2,'username':username,'maxChannels':maxChannels};
-  factory Nvr.fromJson(Map<String,dynamic> x)=>Nvr(id:x['id'],name:x['name'],manufacturer:x['manufacturer'],port:x['port'],port2:x['port2'] as String?,username:x['username'],maxChannels:x['maxChannels']);
-  Nvr copyWith({String? name,String? manufacturer,String? port,String? username,int? maxChannels})=>Nvr(id:id,name:name??this.name,manufacturer:manufacturer??this.manufacturer,port:port??this.port,port2:port2,username:username??this.username,maxChannels:maxChannels??this.maxChannels);
+  final String? streamProtocol;
+  const Nvr({required this.id,required this.name,required this.manufacturer,required this.port,required this.username,required this.maxChannels,this.port2,this.streamProtocol});
+  Map<String,dynamic> toJson()=>{'id':id,'name':name,'manufacturer':manufacturer,'port':port,'port2':port2,'streamProtocol':streamProtocol,'username':username,'maxChannels':maxChannels};
+  factory Nvr.fromJson(Map<String,dynamic> x)=>Nvr(id:x['id'],name:x['name'],manufacturer:x['manufacturer'],port:x['port'],port2:x['port2'] as String?,streamProtocol:x['streamProtocol'] as String?,username:x['username'],maxChannels:x['maxChannels']);
+  Nvr copyWith({String? name,String? manufacturer,String? port,String? username,int? maxChannels,String? streamProtocol})=>Nvr(id:id,name:name??this.name,manufacturer:manufacturer??this.manufacturer,port:port??this.port,port2:port2,streamProtocol:streamProtocol??this.streamProtocol,username:username??this.username,maxChannels:maxChannels??this.maxChannels);
 }
 
 class DeviceStore extends ChangeNotifier {
@@ -96,12 +97,17 @@ class StreamBuilderService {
     final user=Uri.encodeComponent(n.username);
     final pass=Uri.encodeComponent(password);
     final base='rtsp://$user:$pass@$host:${n.port}';
-    if(n.manufacturer=='Dahua') {
+    final port = int.tryParse(n.port);
+    if (port == null || port < 1 || port > 65535) return null;
+    if (channel < 1 || channel > n.maxChannels) return null;
+    if (start != null && end != null && !end.isAfter(start)) return null;
+    final protocol = n.streamProtocol ?? n.manufacturer;
+    if(protocol=='Dahua') {
       if(start==null) return '$base/cam/realmonitor?channel=$channel&subtype=${mainStream ? 0 : 1}';
       final f=DateFormat('yyyy_MM_dd_HH_mm_ss');
       return '$base/cam/playback?channel=$channel&starttime=${f.format(start)}&endtime=${f.format(end??start.add(const Duration(minutes:10)))}';
     }
-    if (n.manufacturer == 'Topcam') {
+    if (protocol == 'Topcam') {
       if (start == null) {
         return topcamFallback
             ? '$base/Streaming/Channels/${channel}01'
@@ -117,12 +123,41 @@ class StreamBuilderService {
       return '$base/playback/ch$channel'
           '?starttime=${local.format(start)}&endtime=${local.format(finish)}';
     }
-    if(n.manufacturer=='Hikvision') {
-      if(start==null) return '$base/Streaming/Channels/${channel}01';
-      // Hikvision recorded playback requires device-specific ISAPI/RTSP validation.
-      return null;
+    if(protocol=='Hikvision') {
+      if(start==null) return '$base/Streaming/Channels/${channel}${mainStream ? '01' : '02'}';
+      final utc = DateFormat("yyyyMMdd'T'HHmmss'Z'");
+      final finish = end ?? start.add(const Duration(minutes: 10));
+      final prefix = topcamFallback ? '/ISAPI' : '';
+      return '$base$prefix/Streaming/tracks/${channel}01'
+          '?starttime=${utc.format(start.toUtc())}&endtime=${utc.format(finish.toUtc())}';
     }
-    if(n.manufacturer=='Uniview' || n.manufacturer=='MEye') return null;
+    if(protocol=='Uniview') {
+      if(start==null) return '$base/unicast/c$channel/s${mainStream ? 0 : 1}/live';
+      final finish = end ?? start.add(const Duration(minutes: 10));
+      return '$base/c$channel/b${start.millisecondsSinceEpoch ~/ 1000}'
+          '/e${finish.millisecondsSinceEpoch ~/ 1000}/replay/';
+    }
+    if(protocol=='MEye' || protocol=='Xiongmai') {
+      // Official Xiongmai RTSP documentation specifies live streaming only.
+      // Playback requires a model-specific SDK or a different confirmed OEM profile.
+      if(start != null) return null;
+      if (topcamFallback) {
+        return 'rtsp://$host:${n.port}/user=${user}_password=${pass}_channel=${channel}_stream=${mainStream ? 0 : 1}.sdp';
+      }
+      return 'rtsp://$host:${n.port}/user=$user&password=$pass&channel=$channel'
+          '&stream=${mainStream ? 0 : 1}.sdp?real_stream';
+    }
+    return null;
+  }
+
+  static String? alternate(Nvr n, int channel, {DateTime? start, DateTime? end,
+      required String password}) {
+    final protocol = n.streamProtocol ?? n.manufacturer;
+    if (protocol == 'Topcam' || protocol == 'MEye' || protocol == 'Xiongmai' ||
+        (protocol == 'Hikvision' && start != null)) {
+      return url(n, channel, start: start, end: end, password: password, topcamFallback: true);
+    }
+    if (start == null) return url(n, channel, password: password, mainStream: true);
     return null;
   }
 }
@@ -210,6 +245,7 @@ class _DeviceFormState extends State<_DeviceForm> {
   late final _user = TextEditingController(text: widget.existing?.username);
   final _password = TextEditingController();
   late String _manufacturer = widget.existing?.manufacturer ?? 'Dahua';
+  late String? _streamProtocol = widget.existing?.streamProtocol;
   late final String _id = widget.existing?.id ??
       DateTime.now().microsecondsSinceEpoch.toString();
   bool _saving = false;
@@ -237,6 +273,7 @@ class _DeviceFormState extends State<_DeviceForm> {
       id: _id,
       name: _name.text.trim(),
       manufacturer: _manufacturer,
+      streamProtocol: _streamProtocol,
       port: int.parse(_port.text).toString(),
       port2: _port2.text.isEmpty ? null : int.parse(_port2.text).toString(),
       username: _user.text.trim(),
@@ -293,9 +330,19 @@ class _DeviceFormState extends State<_DeviceForm> {
                     items: manufacturers.map((name) =>
                         DropdownMenuItem(value: name, child: Text(name))).toList(),
                     onChanged: _saving ? null : (value) {
-                      if (value != null) setState(() => _manufacturer = value);
+                      if (value != null) setState(() { _manufacturer = value; _streamProtocol = null; });
                     },
                   ),
+                  if (_manufacturer == 'Topcam' || _manufacturer == 'MEye')
+                    DropdownButtonFormField<String>(
+                      value: _streamProtocol ?? 'Auto',
+                      decoration: const InputDecoration(labelText: 'Recorder protocol'),
+                      items: const ['Auto', 'Xiongmai', 'Dahua', 'Hikvision', 'Uniview']
+                          .map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
+                      onChanged: _saving ? null : (value) => setState(() {
+                        _streamProtocol = value == 'Auto' ? null : value;
+                      }),
+                    ),
                   TextFormField(
                     controller: _port,
                     enabled: !_saving,
@@ -747,17 +794,13 @@ class _AssistantScreenState extends State<AssistantScreen> with WidgetsBindingOb
     );
     final mode = start == null ? 'Live video' : 'Recorded playback';
     if (link == null) {
-      _finishAttempt(request, '$mode is unavailable for ${target.manufacturer}.');
+      _finishAttempt(request, '$mode is unavailable with this recorder protocol. '
+          'MEye/Topcam playback may require the matching OEM protocol or native SDK.');
       return;
     }
 
-    final alternateLink = switch (target.manufacturer) {
-      'Topcam' => StreamBuilderService.url(target, cameraNumber,
-          start: start, end: end, password: password, topcamFallback: true),
-      'Dahua' when start == null => StreamBuilderService.url(
-          target, cameraNumber, password: password, mainStream: true),
-      _ => null,
-    };
+    final alternateLink = StreamBuilderService.alternate(target, cameraNumber,
+        start: start, end: end, password: password);
     _openStream(
       request, link, port, mode, source,
       // A resumed recording may have lost its hardware decoding surface.

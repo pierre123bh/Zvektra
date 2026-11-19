@@ -13,10 +13,53 @@ void main() {
         start: DateTime(2026, 11, 6, 14), end: DateTime(2026, 11, 6, 14, 10));
     expect(url, contains('channel=5&starttime=2026_11_06_14_00_00&endtime=2026_11_06_14_10_00'));
   });
-  test('Unverified vendor playback is not presented as supported', () {
-    for (final vendor in ['Hikvision', 'Uniview', 'MEye']) {
-      expect(StreamBuilderService.url(device.copyWith(manufacturer: vendor), 1,
-          password: 'test', start: DateTime(2026)), isNull);
+  test('Hikvision playback uses UTC, the requested camera and entered port', () {
+    final nvr = device.copyWith(manufacturer: 'Hikvision');
+    final url = Uri.parse(StreamBuilderService.url(nvr, 7, password: 'a@b',
+        start: DateTime.parse('2026-11-19T12:00:00+02:00'),
+        end: DateTime.parse('2026-11-19T12:02:00+02:00'))!);
+    expect(url.port, 1554);
+    expect(url.path, '/Streaming/tracks/701');
+    expect(url.queryParameters, {'starttime': '20261119T100000Z', 'endtime': '20261119T100200Z'});
+    expect(StreamBuilderService.alternate(nvr, 7, password: 'a@b',
+        start: DateTime.utc(2026, 11, 19)), contains('/ISAPI/Streaming/tracks/701'));
+  });
+  test('Uniview supports live and epoch-based recording ranges', () {
+    final nvr = device.copyWith(manufacturer: 'Uniview');
+    expect(StreamBuilderService.url(nvr, 8, password: 'test'), contains('/unicast/c8/s1/live'));
+    final start = DateTime.utc(2026, 11, 19, 10);
+    final end = start.add(const Duration(minutes: 2));
+    final url = StreamBuilderService.url(nvr, 8, password: 'test', start: start, end: end)!;
+    expect(Uri.parse(url).path, '/c8/b${start.millisecondsSinceEpoch ~/ 1000}/e${end.millisecondsSinceEpoch ~/ 1000}/replay/');
+  });
+  test('OEM protocol survives storage and controls MEye and Topcam playback', () {
+    for (final brand in ['MEye', 'Topcam']) {
+      for (final protocol in ['Dahua', 'Hikvision', 'Uniview']) {
+        final nvr = Nvr.fromJson(device.copyWith(manufacturer: brand,
+            streamProtocol: protocol).toJson());
+        expect(nvr.manufacturer, brand);
+        expect(nvr.streamProtocol, protocol);
+        expect(StreamBuilderService.url(nvr, 2, password: 'test', start: DateTime(2026)),
+            StreamBuilderService.url(device.copyWith(manufacturer: protocol), 2,
+                password: 'test', start: DateTime(2026)));
+      }
+    }
+  });
+  test('Xiongmai live escapes credentials; unsupported playback is explicit', () {
+    final nvr = device.copyWith(manufacturer: 'MEye');
+    expect(StreamBuilderService.url(nvr, 3, password: 'a&b'),
+        contains('user=test%20user&password=a%26b&channel=3&stream=1.sdp?real_stream'));
+    expect(StreamBuilderService.alternate(nvr, 3, password: 'a&b'),
+        contains('user=test%20user_password=a%26b_channel=3_stream=1.sdp'));
+    expect(StreamBuilderService.url(nvr, 3, password: 'test', start: DateTime(2026)), isNull);
+  });
+  test('invalid channel or reversed recording range never opens another camera', () {
+    for (final brand in manufacturers) {
+      final nvr = device.copyWith(manufacturer: brand);
+      expect(StreamBuilderService.url(nvr, 0, password: 'test'), isNull);
+      expect(StreamBuilderService.url(nvr, 9, password: 'test'), isNull);
+      expect(StreamBuilderService.url(nvr, 1, password: 'test',
+          start: DateTime(2026, 2), end: DateTime(2026)), isNull);
     }
   });
   test('Topcam uses the configured port and channel for both live routes', () {
